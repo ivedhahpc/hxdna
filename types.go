@@ -105,6 +105,18 @@ type Command struct {
 type TriageOutcomeDescriptor struct {
 	Value       string `json:"value"`
 	Description string `json:"description"`
+
+	// EvidenceFields declares the dot-paths into this triage entry's evidence JSON that are
+	// meaningful when this specific outcome fires, as path → human-readable description (same
+	// shape as InputSchema, deliberately reusing that type rather than inventing a new one).
+	// Evidence shape is otherwise opaque JSON the control plane cannot introspect — this is the
+	// worker's own declaration of which fields are worth surfacing for this outcome (e.g. a
+	// resolver step's schedule_job scheduled_at_from), scoped to the outcome rather than dumped
+	// as one flat schema for the whole evidence blob, most of which is irrelevant to any given
+	// outcome. Optional — omit for outcomes with no fields worth surfacing this way. Nothing
+	// enforces these paths actually resolve against real evidence; keeping them accurate is the
+	// worker author's responsibility, same as every other manifest declaration.
+	EvidenceFields InputSchema `json:"evidence_fields,omitempty"`
 }
 
 // ContractEntry is a single action the worker exposes as a named, selectable
