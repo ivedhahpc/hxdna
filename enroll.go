@@ -21,11 +21,10 @@ type BootstrapPayload struct {
 
 // EnrollRequest holds the information the worker provides at enrollment time.
 type EnrollRequest struct {
-	Name         string
-	Description  string
-	Hostname     string
-	Version      string
-	WorkerPrompt string
+	Name        string
+	Description string
+	Hostname    string
+	Version     string
 }
 
 // EnrollResult holds the data returned by the control plane after a successful enrollment.
@@ -54,19 +53,13 @@ func DecodeBootstrap(token string) (*BootstrapPayload, error) {
 
 // Enroll registers this worker with the control plane using the decoded bootstrap payload.
 func Enroll(bp *BootstrapPayload, req EnrollRequest) (*EnrollResult, error) {
-	type triagePromptItem struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Content     string `json:"content"`
-	}
 	type requestBody struct {
-		Token         string             `json:"token"`
-		Name          string             `json:"name,omitempty"`
-		Description   string             `json:"description,omitempty"`
-		Environment   string             `json:"environment,omitempty"`
-		Hostname      string             `json:"hostname"`
-		Version       string             `json:"version"`
-		TriagePrompts []triagePromptItem `json:"triage_prompts,omitempty"`
+		Token       string `json:"token"`
+		Name        string `json:"name,omitempty"`
+		Description string `json:"description,omitempty"`
+		Environment string `json:"environment,omitempty"`
+		Hostname    string `json:"hostname"`
+		Version     string `json:"version"`
 	}
 	type responseBody struct {
 		Data struct {
@@ -85,15 +78,6 @@ func Enroll(bp *BootstrapPayload, req EnrollRequest) (*EnrollResult, error) {
 		Environment: bp.Environment,
 		Hostname:    req.Hostname,
 		Version:     req.Version,
-	}
-	if req.WorkerPrompt != "" {
-		body.TriagePrompts = []triagePromptItem{
-			{
-				Name:        "Worker Capability Prompt",
-				Description: "Describes what this worker does and its available commands",
-				Content:     req.WorkerPrompt,
-			},
-		}
 	}
 
 	client := resty.New().SetTimeout(30 * time.Second)
