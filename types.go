@@ -167,6 +167,17 @@ type Manifest struct {
 	// encoding/json never treats a struct value as "empty", so a value field would always
 	// serialize as zeros even when a worker never set it.
 	AlertContract *AlertPolicy `json:"alert_contract,omitempty"`
+
+	// EnrichCommandKey names the one Command (must exist in Commands, and should be
+	// Kind == "ask" for the same read-only/side-effect-free guarantee) this worker wants
+	// used for automated pre-triage enrichment — the control plane calls it with no human
+	// present to disambiguate, so it needs one unambiguous answer, not a menu. Declared
+	// solely by the worker, same as AlertContract: the worker is the only one who knows
+	// which of its ask-safe commands is the right default for unattended use versus one
+	// meant for a human to invoke deliberately (e.g. a general lookup vs a specialised
+	// trace). Omitted (empty string) for a worker with nothing worth auto-enriching with,
+	// or exactly one ask command declared, where there's nothing to disambiguate.
+	EnrichCommandKey string `json:"enrich_command_key,omitempty"`
 }
 
 // AlertCard is the payload a worker publishes on hx.agents.{org}.{worker}.alert to
