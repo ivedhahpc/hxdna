@@ -13,6 +13,12 @@ type HxCommand struct {
 	TicketID   string            `json:"ticket_id"`
 	ResourceID string            `json:"resource_id"`
 	Params     map[string]string `json:"params,omitempty"`
+	// ResourceContext carries optional pre-command enrichment data (e.g. a CMDB/topology
+	// lookup) the control plane gathered before dispatching this command — raw JSON so
+	// each worker decodes it into its own typed struct, same idiom as TriageResponse.Evidence.
+	// Omitted entirely for workers/commands that don't use it — nothing about existing
+	// unmarshaling changes when this field is absent.
+	ResourceContext json.RawMessage `json:"resource_context,omitempty"`
 }
 
 // HxResult is the response a worker publishes back after executing an HxCommand.
