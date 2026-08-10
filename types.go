@@ -141,6 +141,13 @@ type ContractEntry struct {
 	// the worker owns defaulting and validation of anything it doesn't receive.
 	InputSchema InputSchema `json:"input_schema,omitempty"`
 
+	// OutputSchema declares the fields this action's result contains (populated in
+	// ResolverContract entries only, same idiom as CommandMeta.OutputSchema for ask-kind
+	// commands). Lets the control plane offer a later step's input as a reference to an
+	// earlier call_worker step's declared output field — e.g. auto-wiring a canonical field
+	// like "resource_id" forward without a human having to already know it's there.
+	OutputSchema InputSchema `json:"output_schema,omitempty"`
+
 	// PossibleOutcomes is the full set of outcomes this triage entry's command can return
 	// (populated in TriageContract entries only — resolver entries execute actions and have no
 	// outcome output). Each worker type declares its own vocabulary here, with a description
