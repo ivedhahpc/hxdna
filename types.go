@@ -126,26 +126,28 @@ type TriageOutcomeDescriptor struct {
 }
 
 // ContractEntry is a single action the worker exposes as a named, selectable
-// operation. Triage entries describe evidence-collection commands; resolver
-// entries describe executable actions the resolver can dispatch.
+// operation. Triage entries describe evidence-collection commands; resolver entries
+// describe executable actions the resolver can dispatch; lookup entries describe
+// read-only actions eligible as a step in a saved Lookup chain.
 type ContractEntry struct {
 	ActionKey   string `json:"action_key"`
 	DisplayName string `json:"display_name"`
 	Description string `json:"description"`
 
 	// InputSchema declares the parameters this action accepts (populated in
-	// ResolverContract entries only — triage entries take no operator-supplied
-	// params). The control plane renders these as inputs on a call_worker
-	// resolution step and forwards operator-provided values via
-	// HxCommand.Params. Params are always optional at the protocol level —
-	// the worker owns defaulting and validation of anything it doesn't receive.
+	// ResolverContract and LookupContract entries — triage entries take no
+	// operator-supplied params). The control plane renders these as inputs on a
+	// call_worker resolution step (or the first step of a Lookup chain) and forwards
+	// operator-provided values via HxCommand.Params. Params are always optional at
+	// the protocol level — the worker owns defaulting and validation of anything it
+	// doesn't receive.
 	InputSchema InputSchema `json:"input_schema,omitempty"`
 
 	// OutputSchema declares the fields this action's result contains (populated in
-	// ResolverContract entries only, same idiom as CommandMeta.OutputSchema for ask-kind
-	// commands). Lets the control plane offer a later step's input as a reference to an
-	// earlier call_worker step's declared output field — e.g. auto-wiring a canonical field
-	// like "resource_id" forward without a human having to already know it's there.
+	// ResolverContract and LookupContract entries, same idiom as CommandMeta.OutputSchema
+	// for ask-kind commands). Lets the control plane offer a later step's input as a
+	// reference to an earlier step's declared output field — e.g. auto-wiring a canonical
+	// field like "resource_id" forward without a human having to already know it's there.
 	OutputSchema InputSchema `json:"output_schema,omitempty"`
 
 	// PossibleOutcomes is the full set of outcomes this triage entry's command can return
@@ -164,6 +166,18 @@ type Manifest struct {
 	Commands         []Command       `json:"commands"`
 	TriageContract   []ContractEntry `json:"triage_contract,omitempty"`
 	ResolverContract []ContractEntry `json:"resolver_contract,omitempty"`
+	// LookupContract declares the actions this worker exposes as eligible steps in a saved
+	// Lookup chain — same self-contained shape as ResolverContract (own InputSchema/
+	// OutputSchema; ActionKey must still match a real registered handler key, since dispatch
+	// is routed by that string — same as ResolverContract, Commands membership is not
+	// required, but the declared metadata here is authoritative either way, not the
+	// matching Command's Meta if one happens to exist). Deliberately a separate opt-in from
+	// Commands' Kind == "ask": that marks a command safe for the operator's own free-form
+	// Ask box in the moment, while LookupContract marks it additionally safe to be wired
+	// into a saved, unattended chain a human configures once and never revisits. A worker
+	// can have ask commands with no LookupContract entry (Ask-only) or vice versa, though in
+	// practice most ask commands will want both.
+	LookupContract []ContractEntry `json:"lookup_contract,omitempty"`
 	// AlertContract declares this worker's default recheck policy for the alert->incident
 	// pipeline — nil (and omitted from JSON) for workers that don't publish alerts at all.
 	// The control plane does NOT override RecheckIntervalSeconds/MaxRetries — they are the
