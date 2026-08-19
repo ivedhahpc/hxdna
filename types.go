@@ -199,6 +199,18 @@ type Manifest struct {
 	// trace). Omitted (empty string) for a worker with nothing worth auto-enriching with,
 	// or exactly one ask command declared, where there's nothing to disambiguate.
 	EnrichCommandKey string `json:"enrich_command_key,omitempty"`
+
+	// MetricsCommandKey names the one Command (must exist in Commands) this worker wants
+	// used for automated post-triage metrics push — the control plane calls it with no
+	// human present, right after a triage completes, so it needs one unambiguous answer,
+	// not a menu. Same shape and reasoning as EnrichCommandKey, but for the opposite
+	// direction of data flow (control plane -> worker -> external system, not worker ->
+	// control plane): this command is a real side-effecting write (pushes data to an
+	// observability backend), so unlike EnrichCommandKey it should NOT be Kind == "ask" —
+	// "ask" specifically promises read-only/side-effect-free and is what exposes a command
+	// in the operator's free-form ask box, neither of which applies here. Omitted (empty
+	// string) for a worker with no metrics-push capability.
+	MetricsCommandKey string `json:"metrics_command_key,omitempty"`
 }
 
 // AlertCard is the payload a worker publishes on hx.agents.{org}.{worker}.alert to
