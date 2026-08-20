@@ -72,6 +72,42 @@ type TriageOutcome struct {
 type TriageResponse struct {
 	Evidence json.RawMessage `json:"evidence"`
 	Outcome  TriageOutcome   `json:"outcome"`
+	// Metrics is optional — the observability numbers this triage worker considers worth
+	// graphing, in a shape it defines itself (name, kind, value, labels). The control plane
+	// never reads or interprets this; it only relays it, opaque, to whichever worker a
+	// ServiceAgent has configured as its Metrics Worker (see
+	// docs/architecture/observability-metrics.md in the docs repo). Only the worker that
+	// produced Evidence in the first place is ever expected to know what's worth reporting
+	// out of it — that's a domain judgment the control plane and every other worker must
+	// stay out of, same reasoning as why Evidence itself is opaque JSON.
+	Metrics []Metric `json:"metrics,omitempty"`
+}
+
+// MetricKind is the Prometheus metric type this value should be exposed as. Deliberately just
+// counter/gauge — both single-value types Metric's one float64 Value can actually represent.
+// A real Prometheus histogram needs bucket boundaries plus separate _sum/_count series, none of
+// which fit this envelope; adding MetricKindHistogram here would be a constant with no valid
+// implementation, not a real option. If a worker ever needs histogram-shaped data, that's a
+// different, richer envelope to design when that real case shows up — not a value to pre-add now.
+type MetricKind string
+
+const (
+	MetricKindCounter MetricKind = "counter"
+	MetricKindGauge   MetricKind = "gauge"
+)
+
+// Metric is a single observability data point a worker wants graphed, in a transport
+// envelope shared by every worker regardless of domain — deliberately NOT a schema of named
+// domain fields (that was tried and rejected: it assumes every worker's numbers look alike,
+// which they don't — a GPU count and a queue depth have nothing in common except that
+// they're both "a number worth graphing"). Name/Kind/Labels are entirely the emitting
+// worker's own choice; nothing here is centrally registered or validated by hxdna or the
+// control plane.
+type Metric struct {
+	Name   string            `json:"name"`
+	Kind   MetricKind        `json:"kind"`
+	Value  float64           `json:"value"`
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // InputSchema declares the parameters an action or command accepts, as
