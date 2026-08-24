@@ -126,7 +126,14 @@ type CommandMeta struct {
 
 // Command is a single entry in a worker's capability manifest.
 type Command struct {
-	Key         string `json:"key"`
+	Key string `json:"key"`
+	// DisplayName is the short, human-facing label for this command in the operator's
+	// free-form ask picker (e.g. "Verify Node") — Description is the longer explanation
+	// shown alongside it, not instead of it. Optional: omitted (falls back to Description
+	// or Key on the control-plane side) for commands that predate this field or aren't
+	// picker-facing at all (Kind != "ask"). Mirrors ContractEntry's own
+	// DisplayName/Description split above.
+	DisplayName string `json:"display_name,omitempty"`
 	Description string `json:"description"`
 	// Kind is "ask" for a read-only, side-effect-free command a human can invoke
 	// directly on demand (e.g. a lookup) — the control plane only offers "ask"
