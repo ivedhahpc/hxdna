@@ -200,6 +200,18 @@ type ContractEntry struct {
 	// instead of free text that has to coincidentally match whatever string the worker
 	// eventually returns.
 	PossibleOutcomes []TriageOutcomeDescriptor `json:"possible_outcomes,omitempty"`
+
+	// SensitiveFields names the OutputSchema keys (populated in LookupContract entries only)
+	// that carry customer- or environment-identifying data the worker author does not want
+	// forwarded to a third-party AI call — e.g. a NetBox lookup's "customer_name" tenant
+	// field. The worker is the sole authority on which of its own fields this means, the same
+	// way it's the sole authority on OutputSchema's descriptions; nothing here is inferred or
+	// validated by hxdna or the control plane. Left nil/omitted, every field is treated as
+	// safe to forward. The control plane re-resolves this from the worker's manifest itself
+	// at the point it needs to redact — it must never trust a copy of this list handed back
+	// to it by a client, since that would let redaction be silently defeated by anything that
+	// echoes a stale or edited result back.
+	SensitiveFields []string `json:"sensitive_fields,omitempty"`
 }
 
 // Manifest is published to the control plane at enrollment and re-announced on every NATS reconnect.
