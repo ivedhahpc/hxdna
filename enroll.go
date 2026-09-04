@@ -33,6 +33,9 @@ type EnrollResult struct {
 	Name       string
 	EnrolledAt string
 	NatsURL    string
+	// SubjectPrefix namespaces this worker's NATS subjects — see State.SubjectPrefix.
+	// Required: Enroll returns an error below if the control plane's response omits it.
+	SubjectPrefix string
 }
 
 // DecodeBootstrap decodes a base64 bootstrap token into a BootstrapPayload.
@@ -63,10 +66,11 @@ func Enroll(bp *BootstrapPayload, req EnrollRequest) (*EnrollResult, error) {
 	}
 	type responseBody struct {
 		Data struct {
-			WorkerID   string `json:"worker_id"`
-			Name       string `json:"name"`
-			EnrolledAt string `json:"enrolled_at"`
-			NatsURL    string `json:"nats_url"`
+			WorkerID      string `json:"worker_id"`
+			Name          string `json:"name"`
+			EnrolledAt    string `json:"enrolled_at"`
+			NatsURL       string `json:"nats_url"`
+			SubjectPrefix string `json:"subject_prefix"`
 		} `json:"data"`
 		Message string `json:"message"`
 	}
@@ -95,12 +99,16 @@ func Enroll(bp *BootstrapPayload, req EnrollRequest) (*EnrollResult, error) {
 	if resp.Data.WorkerID == "" {
 		return nil, fmt.Errorf("control plane returned an empty worker_id — check the bootstrap token and try again")
 	}
+	if resp.Data.SubjectPrefix == "" {
+		return nil, fmt.Errorf("control plane returned an empty subject_prefix — its /workers/enroll response needs updating")
+	}
 
 	return &EnrollResult{
-		WorkerID:   resp.Data.WorkerID,
-		Name:       resp.Data.Name,
-		EnrolledAt: resp.Data.EnrolledAt,
-		NatsURL:    resp.Data.NatsURL,
+		WorkerID:      resp.Data.WorkerID,
+		Name:          resp.Data.Name,
+		EnrolledAt:    resp.Data.EnrolledAt,
+		NatsURL:       resp.Data.NatsURL,
+		SubjectPrefix: resp.Data.SubjectPrefix,
 	}, nil
 }
 

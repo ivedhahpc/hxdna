@@ -14,6 +14,15 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
+// WorkerSubject builds a fully-namespaced worker subject: "{prefix}.agents.{orgID}.{workerID}.{suffix}".
+// Every worker subject — online/cmd/result inside this package, and any self-initiated publish a
+// worker repo adds on its own (e.g. an alert) — must go through this rather than reassembling the
+// pattern inline, so a future addition can't silently hardcode the old "hx." literal the way
+// observium-worker's alert publisher once did and drift from whatever prefix is actually in use.
+func WorkerSubject(prefix, orgID, workerID, suffix string) string {
+	return fmt.Sprintf("%s.agents.%s.%s.%s", prefix, orgID, workerID, suffix)
+}
+
 // Router dispatches incoming HxCommands to registered handlers.
 // It is the worker's equivalent of Chi — one NATS subscriber, a handler registry, clean dispatch.
 type Router struct {
@@ -113,7 +122,7 @@ func (r *Router) Serve(cfg ServeConfig) error {
 		Version:  cfg.Version,
 		Manifest: r.manifest,
 	}
-	onlineSubject := fmt.Sprintf("hx.agents.%s.%s.online", s.OrgID, s.WorkerID)
+	onlineSubject := WorkerSubject(s.SubjectPrefix, s.OrgID, s.WorkerID, "online")
 
 	announce := func(nc *nats.Conn) error {
 		card.AnnouncedAt = time.Now().UTC()
@@ -165,7 +174,7 @@ func (r *Router) Serve(cfg ServeConfig) error {
 	}
 	sem := make(chan struct{}, concurrency)
 
-	cmdSubject := fmt.Sprintf("hx.agents.%s.%s.cmd.>", s.OrgID, s.WorkerID)
+	cmdSubject := WorkerSubject(s.SubjectPrefix, s.OrgID, s.WorkerID, "cmd.>")
 
 	_, err = nc.Subscribe(cmdSubject, func(msg *nats.Msg) {
 		var cmd HxCommand
@@ -188,7 +197,7 @@ func (r *Router) Serve(cfg ServeConfig) error {
 				log.Warnw("dropping result: no reply subject and no request_id", "command", cmd.CommandKey)
 				return
 			}
-			replySubject = fmt.Sprintf("hx.agents.%s.%s.result.%s", s.OrgID, s.WorkerID, cmd.RequestID)
+			replySubject = WorkerSubject(s.SubjectPrefix, s.OrgID, s.WorkerID, "result."+cmd.RequestID)
 		}
 
 		sem <- struct{}{}

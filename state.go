@@ -16,6 +16,14 @@ type State struct {
 	ControlURL  string
 	EnrolledAt  string
 	Environment string
+	// SubjectPrefix namespaces this worker's NATS subjects (e.g. "hx" for
+	// "hx.agents.{org}.{worker}.cmd.>") — one per control plane/product, not per
+	// worker, so every worker enrolled to the same control plane shares the same
+	// value. Required, no default: a silent fallback here is exactly the collision
+	// risk this field exists to prevent — if a control plane ever forgot to return
+	// one, its workers would silently collapse onto whatever the default was instead
+	// of failing loudly.
+	SubjectPrefix string
 }
 
 // LoadState reads state from ~/.{dirName}/.env.
@@ -34,14 +42,15 @@ func LoadState(dirName string) (*State, error) {
 		return nil, fmt.Errorf("reading state: %w", err)
 	}
 	s := &State{
-		WorkerID:    env["WORKER_ID"],
-		OrgID:       env["ORG_ID"],
-		NatsURL:     env["NATS_URL"],
-		ControlURL:  env["CONTROL_URL"],
-		EnrolledAt:  env["ENROLLED_AT"],
-		Environment: env["ENVIRONMENT"],
+		WorkerID:      env["WORKER_ID"],
+		OrgID:         env["ORG_ID"],
+		NatsURL:       env["NATS_URL"],
+		ControlURL:    env["CONTROL_URL"],
+		EnrolledAt:    env["ENROLLED_AT"],
+		Environment:   env["ENVIRONMENT"],
+		SubjectPrefix: env["NATS_SUBJECT_PREFIX"],
 	}
-	if s.WorkerID == "" || s.OrgID == "" || s.NatsURL == "" || s.ControlURL == "" {
+	if s.WorkerID == "" || s.OrgID == "" || s.NatsURL == "" || s.ControlURL == "" || s.SubjectPrefix == "" {
 		return nil, fmt.Errorf("state is incomplete — re-enroll with: worker enroll <bootstrap>")
 	}
 	return s, nil
@@ -57,12 +66,13 @@ func SaveState(dirName string, s *State) error {
 		return fmt.Errorf("creating state dir: %w", err)
 	}
 	env := map[string]string{
-		"WORKER_ID":   s.WorkerID,
-		"ORG_ID":      s.OrgID,
-		"NATS_URL":    s.NatsURL,
-		"CONTROL_URL": s.ControlURL,
-		"ENROLLED_AT": s.EnrolledAt,
-		"ENVIRONMENT": s.Environment,
+		"WORKER_ID":           s.WorkerID,
+		"ORG_ID":              s.OrgID,
+		"NATS_URL":            s.NatsURL,
+		"CONTROL_URL":         s.ControlURL,
+		"ENROLLED_AT":         s.EnrolledAt,
+		"ENVIRONMENT":         s.Environment,
+		"NATS_SUBJECT_PREFIX": s.SubjectPrefix,
 	}
 	path := filepath.Join(dir, ".env")
 	if err := godotenv.Write(env, path); err != nil {
