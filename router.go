@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -13,6 +14,23 @@ import (
 
 	"github.com/nats-io/nats.go"
 )
+
+// invalidSubjectPrefixChars mirrors the control plane's own BROKER_SUBJECT_PREFIX
+// validation (helixops config.validate): "." breaks WorkerSubject's fixed
+// "{prefix}.agents.{orgID}.{workerID}.{suffix}" segment assumption, "*"/">" are NATS
+// wildcards that could turn a prefix into an unintended subscription/publish pattern,
+// and whitespace is never a valid subject token.
+const invalidSubjectPrefixChars = ". *>\t\n"
+
+// validSubjectPrefix checks a SubjectPrefix from an untrusted source (an enrollment
+// response, or state loaded from disk) before hxdna trusts it — this package has no
+// visibility into whether the control plane it's talking to validated the value on its
+// own end, and WorkerSubject itself has no way to reject a bad prefix once accepted
+// (it just formats a string), so the check has to happen here, at the two points a
+// prefix first enters the process.
+func validSubjectPrefix(prefix string) bool {
+	return prefix != "" && !strings.ContainsAny(prefix, invalidSubjectPrefixChars)
+}
 
 // WorkerSubject builds a fully-namespaced worker subject: "{prefix}.agents.{orgID}.{workerID}.{suffix}".
 // Every worker subject — online/cmd/result inside this package, and any self-initiated publish a

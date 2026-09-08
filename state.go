@@ -53,6 +53,9 @@ func LoadState(dirName string) (*State, error) {
 	if s.WorkerID == "" || s.OrgID == "" || s.NatsURL == "" || s.ControlURL == "" || s.SubjectPrefix == "" {
 		return nil, fmt.Errorf("state is incomplete — re-enroll with: worker enroll <bootstrap>")
 	}
+	if !validSubjectPrefix(s.SubjectPrefix) {
+		return nil, fmt.Errorf("state has an invalid subject_prefix %q — re-enroll with: worker enroll <bootstrap>", s.SubjectPrefix)
+	}
 	return s, nil
 }
 

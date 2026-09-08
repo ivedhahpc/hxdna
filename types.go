@@ -279,6 +279,13 @@ type AlertCard struct {
 	Message    string `json:"message"`
 	AlertID    string `json:"alert_id"` // source's own stable ID — the worker republishes every still-failing alert on every poll tagged with this, so the control plane is responsible for rejecting repeats.
 
+	// ResourceURL is a human-browsable link to this resource in the source system (e.g.
+	// a NetBox device's own page) — not an API endpoint. Entirely optional: a worker
+	// only sets it if it can construct one itself, same posture as every other field
+	// here. Omitted means no link, never a guessed or fabricated one; the control plane
+	// never derives this from ResourceID/Source on its own.
+	ResourceURL string `json:"resource_url,omitempty"`
+
 	// ResourceType is the source's own entity/asset-class label for what ResourceID
 	// refers to (e.g. a monitoring source's "device"/"port"/"sensor"). Informational only,
 	// like FirstFailed/FailCount below — nothing in the control plane branches on it today.

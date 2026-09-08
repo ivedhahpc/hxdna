@@ -102,6 +102,9 @@ func Enroll(bp *BootstrapPayload, req EnrollRequest) (*EnrollResult, error) {
 	if resp.Data.SubjectPrefix == "" {
 		return nil, fmt.Errorf("control plane returned an empty subject_prefix — its /workers/enroll response needs updating")
 	}
+	if !validSubjectPrefix(resp.Data.SubjectPrefix) {
+		return nil, fmt.Errorf("control plane returned an invalid subject_prefix %q — must be a single subject token with no \".\", \"*\", \">\", or whitespace", resp.Data.SubjectPrefix)
+	}
 
 	return &EnrollResult{
 		WorkerID:      resp.Data.WorkerID,
