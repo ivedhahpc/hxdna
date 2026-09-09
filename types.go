@@ -326,6 +326,15 @@ type ResourceProperties struct {
 	Vendor   string `json:"vendor,omitempty"`
 	Hardware string `json:"hardware,omitempty"`
 	Location string `json:"location,omitempty"`
+
+	// Extra is a free-form escape hatch for source-specific enrichment that doesn't fit
+	// the named fields above (e.g. a NetBox worker attaching its last few journal
+	// entries). Keeping FQDN/IP/Vendor/Hardware/Location as a known, stable vocabulary
+	// every worker/UI can rely on, while Extra lets one worker attach its own
+	// domain-specific detail without every worker having to agree on a shared schema for
+	// it, or the control plane ever needing to know it exists. Omitted entirely when a
+	// worker has nothing extra to report — not present as an empty map.
+	Extra map[string]string `json:"extra,omitempty"`
 }
 
 // AlertPolicy is the recheck policy a worker declares for the alerts it publishes —
