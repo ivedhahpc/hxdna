@@ -218,24 +218,33 @@ func (r *Router) Serve(cfg ServeConfig) error {
 			replySubject = WorkerSubject(s.SubjectPrefix, s.OrgID, s.WorkerID, "result."+cmd.RequestID)
 		}
 
+		// The control plane's request ID for the run this command belongs to (a triage, a
+		// resolve, a chat question), sent as a header — distinct from cmd.RequestID, which is
+		// unique per command and routes the reply. Logged on this command's lines so the worker's
+		// side can be matched to the control plane's. Absent (e.g. health pings) → not logged.
+		clog := log
+		if id := msg.Header.Get(RequestIDHeader); id != "" {
+			clog = log.With("request_id", id)
+		}
+
 		sem <- struct{}{}
 		go func() {
 			defer func() { <-sem }()
 
 			start := time.Now()
-			log.Debugw("command received", "command", cmd.CommandKey, "ticket_id", cmd.TicketID, "resource_id", cmd.ResourceID)
+			clog.Debugw("command received", "command", cmd.CommandKey, "ticket_id", cmd.TicketID, "resource_id", cmd.ResourceID)
 
 			result := r.dispatch(cmd)
 
 			elapsed := time.Since(start).Round(time.Millisecond)
 			if result.Success {
-				log.Infow("command ok", "command", cmd.CommandKey, "elapsed", elapsed)
+				clog.Infow("command ok", "command", cmd.CommandKey, "elapsed", elapsed)
 			} else {
-				log.Errorw("command failed", "command", cmd.CommandKey, "error", result.Error, "elapsed", elapsed)
+				clog.Errorw("command failed", "command", cmd.CommandKey, "error", result.Error, "elapsed", elapsed)
 			}
 
 			if err := nc.Publish(replySubject, result.ToJSON()); err != nil {
-				log.Errorw("failed to publish result", "error", err)
+				clog.Errorw("failed to publish result", "error", err)
 			}
 		}()
 	})

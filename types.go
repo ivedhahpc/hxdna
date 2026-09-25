@@ -5,6 +5,11 @@ import (
 	"time"
 )
 
+// RequestIDHeader is the NATS message header the control plane puts a command's run-level
+// request ID in (a triage, a resolve, a chat question). The router logs it on that command's
+// lines; it is separate from HxCommand.RequestID, which is unique per command.
+const RequestIDHeader = "X-Request-ID"
+
 // HxCommand is the standard payload the control plane sends over NATS
 // to instruct a worker to perform an action. See: EIP Command Message.
 type HxCommand struct {
