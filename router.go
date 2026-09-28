@@ -156,11 +156,11 @@ func (r *Router) Serve(cfg ServeConfig) error {
 
 	var disconnected atomic.Bool
 
-	nc, err := nats.Connect(s.NatsURL,
-		nats.Name("worker-"+s.WorkerID),
+	opts := append([]nats.Option{
+		nats.Name("worker-" + s.WorkerID),
 		nats.MaxReconnects(-1),
-		nats.ReconnectWait(5*time.Second),
-		nats.DrainTimeout(30*time.Second),
+		nats.ReconnectWait(5 * time.Second),
+		nats.DrainTimeout(30 * time.Second),
 		nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
 			if disconnected.CompareAndSwap(false, true) {
 				log.Warnw("connection lost — waiting to reconnect", "error", err)
@@ -175,7 +175,8 @@ func (r *Router) Serve(cfg ServeConfig) error {
 				log.Infow("re-announced", "subject", onlineSubject)
 			}
 		}),
-	)
+	}, s.NATSOptions()...)
+	nc, err := nats.Connect(s.NatsURL, opts...)
 	if err != nil {
 		return fmt.Errorf("NATS connect failed: %w", err)
 	}

@@ -36,6 +36,9 @@ type EnrollResult struct {
 	// SubjectPrefix namespaces this worker's NATS subjects — see State.SubjectPrefix.
 	// Required: Enroll returns an error below if the control plane's response omits it.
 	SubjectPrefix string
+	// NatsKey is this worker's NATS credential — see State.NatsKey. Optional: absent from a
+	// control plane that doesn't issue one yet.
+	NatsKey string
 }
 
 // DecodeBootstrap decodes a base64 bootstrap token into a BootstrapPayload.
@@ -71,6 +74,7 @@ func Enroll(bp *BootstrapPayload, req EnrollRequest) (*EnrollResult, error) {
 			EnrolledAt    string `json:"enrolled_at"`
 			NatsURL       string `json:"nats_url"`
 			SubjectPrefix string `json:"subject_prefix"`
+			NatsKey       string `json:"nats_key"`
 		} `json:"data"`
 		Message string `json:"message"`
 	}
@@ -112,6 +116,7 @@ func Enroll(bp *BootstrapPayload, req EnrollRequest) (*EnrollResult, error) {
 		EnrolledAt:    resp.Data.EnrolledAt,
 		NatsURL:       resp.Data.NatsURL,
 		SubjectPrefix: resp.Data.SubjectPrefix,
+		NatsKey:       resp.Data.NatsKey,
 	}, nil
 }
 

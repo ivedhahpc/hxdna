@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/joho/godotenv"
+	"github.com/nats-io/nats.go"
 )
 
 // State holds the enrollment result persisted on disk after a successful enroll.
@@ -24,6 +26,41 @@ type State struct {
 	// one, its workers would silently collapse onto whatever the default was instead
 	// of failing loudly.
 	SubjectPrefix string
+	// NatsKey is this worker's own NATS credential, issued once at enrollment by a control
+	// plane that locks its NATS server (see package natsauth). Empty for a worker enrolled
+	// before that, or with a control plane that doesn't issue one — it then connects without
+	// credentials, which only works while that NATS server is still open.
+	NatsKey string
+}
+
+// NewState builds the State to save after a successful Enroll, so a worker repo doesn't copy
+// fields by hand and silently drop one hxdna adds later (as NatsKey was).
+func NewState(bp *BootstrapPayload, res *EnrollResult) *State {
+	env := bp.Environment
+	if env == "" {
+		env = "production"
+	}
+	return &State{
+		WorkerID:      res.WorkerID,
+		OrgID:         bp.OrgID,
+		NatsURL:       res.NatsURL,
+		ControlURL:    strings.TrimRight(bp.URL, "/"),
+		EnrolledAt:    res.EnrolledAt,
+		Environment:   env,
+		SubjectPrefix: res.SubjectPrefix,
+		NatsKey:       res.NatsKey,
+	}
+}
+
+// NATSOptions returns the options every NATS connection this worker opens must carry — the
+// Router's own, and any a worker repo opens itself (e.g. an alert poller). With a NatsKey the
+// worker connects as its worker ID; the control plane's NATS then allows it only its own
+// subjects.
+func (s *State) NATSOptions() []nats.Option {
+	if s.NatsKey == "" {
+		return nil
+	}
+	return []nats.Option{nats.UserInfo(s.WorkerID, s.NatsKey)}
 }
 
 // LoadState reads state from ~/.{dirName}/.env.
@@ -49,6 +86,7 @@ func LoadState(dirName string) (*State, error) {
 		EnrolledAt:    env["ENROLLED_AT"],
 		Environment:   env["ENVIRONMENT"],
 		SubjectPrefix: env["NATS_SUBJECT_PREFIX"],
+		NatsKey:       env["NATS_KEY"],
 	}
 	if s.WorkerID == "" || s.OrgID == "" || s.NatsURL == "" || s.ControlURL == "" || s.SubjectPrefix == "" {
 		return nil, fmt.Errorf("state is incomplete — re-enroll with: worker enroll <bootstrap>")
@@ -76,6 +114,9 @@ func SaveState(dirName string, s *State) error {
 		"ENROLLED_AT":         s.EnrolledAt,
 		"ENVIRONMENT":         s.Environment,
 		"NATS_SUBJECT_PREFIX": s.SubjectPrefix,
+	}
+	if s.NatsKey != "" {
+		env["NATS_KEY"] = s.NatsKey
 	}
 	path := filepath.Join(dir, ".env")
 	if err := godotenv.Write(env, path); err != nil {
