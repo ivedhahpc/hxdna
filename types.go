@@ -88,6 +88,44 @@ type TriageResponse struct {
 	Metrics []Metric `json:"metrics,omitempty"`
 }
 
+// PlaybookContract is the Playbook pipeline's contract, alongside TriageContract/
+// ResolverContract (Service Agent), Commands with Kind "ask" (Ask), LookupContract (Lookup) and
+// AlertContract (Alerts).
+//
+// Every playbook step acts on exactly one device: the control plane sends it as
+// HxCommand.ResourceID, never as a param, so the key a step runs against never changes from one
+// playbook to the next. A fleet-wide command (one that takes no device, e.g. listing every
+// unlisted node) is not a playbook step.
+//
+// A command offered to more than one pipeline (e.g. relisting a node, offered to both the
+// resolver and playbooks) is listed in each pipeline's contract. Define its ContractEntry once
+// as a variable and reference it from every list — never copy it inline, or the copies drift.
+type PlaybookContract struct {
+	// Checks are read-only and answer one question: is this device fit for the playbook's
+	// actions? Each returns PlaybookCheckResult; the worker decides Passed by its own fixed
+	// rules. The control plane reads Passed and nothing else — DisplayName/Description are the
+	// worker's own words, shown to people, never interpreted. Leave InputSchema and OutputSchema
+	// empty: a check takes only the device, and its result is always PlaybookCheckResult.
+	Checks []ContractEntry `json:"checks,omitempty"`
+	// Actions change something about the device (relist it, cancel its maintenance, set its
+	// status). InputSchema declares only the params beyond the device (e.g. the status to
+	// set); an action that needs nothing else declares none.
+	Actions []ContractEntry `json:"actions,omitempty"`
+}
+
+// PlaybookCheckResult is the Data payload every PlaybookContract check returns.
+type PlaybookCheckResult struct {
+	// Passed is the verdict, decided by the worker's own fixed rules — the only field the
+	// control plane acts on. false stops the device before any action runs.
+	Passed bool `json:"passed"`
+	// Reason is one line, in the worker's words, saying why — shown to the operator beside the
+	// device either way (e.g. "healthy — only spare ports down: eno2").
+	Reason string `json:"reason"`
+	// Evidence is optional detail behind the verdict, opaque to the control plane — shown to an
+	// operator who expands the device, never read.
+	Evidence json.RawMessage `json:"evidence,omitempty"`
+}
+
 // MetricKind is the Prometheus metric type this value should be exposed as. Deliberately just
 // counter/gauge — both single-value types Metric's one float64 Value can actually represent.
 // A real Prometheus histogram needs bucket boundaries plus separate _sum/_count series, none of
@@ -176,24 +214,27 @@ type TriageOutcomeDescriptor struct {
 // ContractEntry is a single action the worker exposes as a named, selectable
 // operation. Triage entries describe evidence-collection commands; resolver entries
 // describe executable actions the resolver can dispatch; lookup entries describe
-// read-only actions eligible as a step in a saved Lookup chain.
+// read-only actions eligible as a step in a saved Lookup chain; playbook entries describe
+// the checks and actions a Playbook can run against one device (see PlaybookContract).
 type ContractEntry struct {
 	ActionKey   string `json:"action_key"`
 	DisplayName string `json:"display_name"`
 	Description string `json:"description"`
 
 	// InputSchema declares the parameters this action accepts (populated in
-	// ResolverContract and LookupContract entries — triage entries take no
-	// operator-supplied params). The control plane renders these as inputs on a
-	// call_worker resolution step (or the first step of a Lookup chain) and forwards
+	// ResolverContract, LookupContract and PlaybookContract.Actions entries — triage entries
+	// and playbook checks take no operator-supplied params; a playbook action declares only
+	// params beyond the device). The control plane renders these as inputs on a call_worker
+	// resolution step, the first step of a Lookup chain, or a playbook action, and forwards
 	// operator-provided values via HxCommand.Params. Params are always optional at
 	// the protocol level — the worker owns defaulting and validation of anything it
 	// doesn't receive.
 	InputSchema InputSchema `json:"input_schema,omitempty"`
 
 	// OutputSchema declares the fields this action's result contains (populated in
-	// ResolverContract and LookupContract entries, same idiom as CommandMeta.OutputSchema
-	// for ask-kind commands). Lets the control plane offer a later step's input as a
+	// ResolverContract, LookupContract and PlaybookContract.Actions entries, same idiom as
+	// CommandMeta.OutputSchema for ask-kind commands — never on a playbook check, whose result
+	// is always PlaybookCheckResult). Lets the control plane offer a later step's input as a
 	// reference to an earlier step's declared output field — e.g. auto-wiring a canonical
 	// field like "resource_id" forward without a human having to already know it's there.
 	OutputSchema InputSchema `json:"output_schema,omitempty"`
@@ -238,6 +279,11 @@ type Manifest struct {
 	// can have ask commands with no LookupContract entry (Ask-only) or vice versa, though in
 	// practice most ask commands will want both.
 	LookupContract []ContractEntry `json:"lookup_contract,omitempty"`
+	// PlaybookContract declares what this worker offers the Playbook pipeline: an operator runs
+	// a saved set of steps against one device at a time — read-only checks first, then actions
+	// once every check passed. nil (omitted) for a worker with nothing to offer playbooks. See
+	// PlaybookContract.
+	PlaybookContract *PlaybookContract `json:"playbook_contract,omitempty"`
 	// AlertContract declares this worker's default recheck policy for the alert->incident
 	// pipeline — nil (and omitted from JSON) for workers that don't publish alerts at all.
 	// The control plane does NOT override RecheckIntervalSeconds/MaxRetries — they are the
