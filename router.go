@@ -224,24 +224,34 @@ func (r *Router) Serve(cfg ServeConfig) error {
 		// unique per command and routes the reply. Logged on this command's lines so the worker's
 		// side can be matched to the control plane's. Absent (e.g. health pings) → not logged.
 		clog := log
+		logReceived := log.Debugw
 		if id := msg.Header.Get(RequestIDHeader); id != "" {
 			clog = log.With("request_id", id)
+			logReceived = clog.Infow
 		}
 
-		sem <- struct{}{}
+		// Logged on arrival, before waiting for a free slot: queued is that wait, elapsed is the
+		// handler's own run time — together they're what the control plane's timeout sees. INFO
+		// only for commands that belong to a run; prober pings (no request ID) stay at debug.
+		// The slot is taken inside the goroutine, not here: NATS runs this callback serially, so
+		// blocking it would leave later commands unstamped in the client buffer.
+		received := time.Now()
+		logReceived("command received", "command", cmd.CommandKey, "ticket_id", cmd.TicketID, "resource_id", cmd.ResourceID)
+
 		go func() {
+			sem <- struct{}{}
 			defer func() { <-sem }()
 
 			start := time.Now()
-			clog.Debugw("command received", "command", cmd.CommandKey, "ticket_id", cmd.TicketID, "resource_id", cmd.ResourceID)
+			queued := start.Sub(received).Round(time.Millisecond)
 
 			result := r.dispatch(cmd)
 
 			elapsed := time.Since(start).Round(time.Millisecond)
 			if result.Success {
-				clog.Infow("command ok", "command", cmd.CommandKey, "elapsed", elapsed)
+				clog.Infow("command ok", "command", cmd.CommandKey, "queued", queued, "elapsed", elapsed)
 			} else {
-				clog.Errorw("command failed", "command", cmd.CommandKey, "error", result.Error, "elapsed", elapsed)
+				clog.Errorw("command failed", "command", cmd.CommandKey, "error", result.Error, "queued", queued, "elapsed", elapsed)
 			}
 
 			if err := nc.Publish(replySubject, result.ToJSON()); err != nil {
