@@ -89,8 +89,8 @@ type TriageResponse struct {
 }
 
 // PlaybookContract is the Playbook pipeline's contract, alongside TriageContract/
-// ResolverContract (Service Agent), Commands with Kind "ask" (Ask), LookupContract (Lookup) and
-// AlertContract (Alerts).
+// ResolverContract (Service Agent), Commands with Kind "ask" (Ask), LookupContract (Lookup),
+// DiagnoseContract (Diagnose) and AlertContract (Alerts).
 //
 // Every playbook step acts on exactly one device: the control plane sends it as
 // HxCommand.ResourceID, never as a param, so the key a step runs against never changes from one
@@ -124,6 +124,108 @@ type PlaybookCheckResult struct {
 	// Evidence is optional detail behind the verdict, opaque to the control plane — shown to an
 	// operator who expands the device, never read.
 	Evidence json.RawMessage `json:"evidence,omitempty"`
+}
+
+// DiagnoseEntry is one diagnosis a worker offers in its DiagnoseContract. Diagnose is the
+// pipeline that answers why a ticket waiting for a person is in that state, once someone asks:
+// an operator reviewing it clicks Diagnose, and the control plane runs the entry whose Triggers
+// holds the ticket's triage trigger (TriageOutcome.Trigger), from the DiagnoseContract of the
+// worker that triaged it, against the ticket's device as HxCommand.ResourceID. Never during
+// automated triage — it runs only when someone is there to read it.
+//
+// A diagnosis walks a fixed chain of yes/no questions the worker answers from evidence by its
+// own rules, and stops at a cause or at the first question it can't answer. Read-only, always: it
+// runs on demand with no approval, so it never changes anything on the device — fixing is what
+// playbooks are for. It returns DiagnosisResult.
+//
+// A trigger belongs to at most one entry in a worker's DiagnoseContract, and every trigger named
+// must be one the worker's triage declares (TriageOutcomeDescriptor.Triggers). An entry with no
+// Triggers is reached only through another entry's DiagnosisResult.Next. Its own type, not more
+// fields on ContractEntry, so diagnose-only fields can't ride along into another pipeline's list.
+type DiagnoseEntry struct {
+	ContractEntry
+	// Triggers are the triage triggers this entry diagnoses.
+	Triggers []string `json:"triggers,omitempty"`
+	// PossibleCauses is every cause this entry can return, each with who fixes it.
+	PossibleCauses []CauseDescriptor `json:"possible_causes"`
+}
+
+// DiagnosisAnswer is one step's answer. Unknown — the evidence couldn't settle it — ends the
+// chain there; nothing past an unknown is guessed.
+type DiagnosisAnswer string
+
+const (
+	DiagnosisYes     DiagnosisAnswer = "yes"
+	DiagnosisNo      DiagnosisAnswer = "no"
+	DiagnosisUnknown DiagnosisAnswer = "unknown"
+)
+
+// FixOwner is who acts on a cause. A small fixed set the control plane understands, so it can
+// route a cause without reading worker-specific words; one it doesn't know is treated as
+// FixOwnerPerson.
+type FixOwner string
+
+const (
+	// FixOwnerRemote: fixable from software without taking the device out of service.
+	FixOwnerRemote FixOwner = "remote"
+	// FixOwnerMaintenance: fixable from software once the device is drained (e.g. a GPU reset).
+	FixOwnerMaintenance FixOwner = "maintenance"
+	// FixOwnerDC: needs hands on the hardware at the data center (reseat, cable, optic).
+	FixOwnerDC FixOwner = "dc"
+	// FixOwnerVendor: needs the hardware vendor (an RMA).
+	FixOwnerVendor FixOwner = "vendor"
+	// FixOwnerPlatform: needs the platform the device serves (e.g. its marketplace renewing the
+	// host's credentials).
+	FixOwnerPlatform FixOwner = "platform"
+	// FixOwnerPerson: needs a person to look — the cause has no owner above. A diagnosis that
+	// ended in unknown (no cause) goes to a person too.
+	FixOwnerPerson FixOwner = "person"
+)
+
+// CauseDescriptor documents one cause a diagnose entry can return, with who fixes it — declared
+// up front in the manifest, as PossibleOutcomes is for triage, so the control plane knows every
+// answer before one arrives. FixOwner lives here only: the control plane looks a result's Cause
+// up here, so a cause can't name one owner in the manifest and another in a result.
+type CauseDescriptor struct {
+	Value       string   `json:"value"`
+	FixOwner    FixOwner `json:"fix_owner"`
+	Description string   `json:"description"`
+}
+
+// DiagnosisStep is one question in the chain, its answer, and why — the same Reason/Evidence
+// pair as PlaybookCheckResult.
+type DiagnosisStep struct {
+	Question string          `json:"question"`
+	Answer   DiagnosisAnswer `json:"answer"`
+	// Reason is one line in the worker's words (e.g. "restarts=77818, 400 exits in 15m").
+	Reason string `json:"reason"`
+	// Evidence is optional detail behind the answer (e.g. the log lines), opaque to the control
+	// plane — shown to an operator who expands the step, never read.
+	Evidence json.RawMessage `json:"evidence,omitempty"`
+}
+
+// DiagnosisDetail is one named value acting on the cause needs — kept as a list so the worker
+// decides the order people read them in.
+type DiagnosisDetail struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+// DiagnosisResult is the Data payload every DiagnoseEntry returns.
+type DiagnosisResult struct {
+	// Cause is one of the entry's PossibleCauses, decided by the worker's own rules — or empty
+	// exactly when the chain stopped at an unknown, with no cause to name.
+	Cause string `json:"cause"`
+	// Chain is every question asked, in order — at least one. Its last step is unknown exactly
+	// when Cause is empty.
+	Chain []DiagnosisStep `json:"chain"`
+	// Detail is what acting on the cause needs (an exit error, a bus ID, a switch port), in the
+	// order to read it. Shown, never interpreted.
+	Detail []DiagnosisDetail `json:"detail,omitempty"`
+	// Next names deeper entries in the same worker's DiagnoseContract (by ActionKey) that could
+	// go further where this chain stopped. Offered to the operator, never run by themselves; one
+	// that runs gets the same ResourceID and this result's Detail as HxCommand.Params.
+	Next []string `json:"next,omitempty"`
 }
 
 // MetricKind is the Prometheus metric type this value should be exposed as. Deliberately just
@@ -209,22 +311,30 @@ type TriageOutcomeDescriptor struct {
 	// enforces these paths actually resolve against real evidence; keeping them accurate is the
 	// worker author's responsibility, same as every other manifest declaration.
 	EvidenceFields InputSchema `json:"evidence_fields,omitempty"`
+
+	// Triggers is every TriageOutcome.Trigger this outcome can come with — the specific fault
+	// behind it (e.g. outcome maintenance_required, triggers gpus_missing, runpod_service_down).
+	// Declared so a DiagnoseEntry can be checked against real triggers, and a renamed trigger
+	// can't silently leave its diagnosis unreachable. Optional for a worker with no diagnoses.
+	Triggers []string `json:"triggers,omitempty"`
 }
 
 // ContractEntry is a single action the worker exposes as a named, selectable
 // operation. Triage entries describe evidence-collection commands; resolver entries
 // describe executable actions the resolver can dispatch; lookup entries describe
 // read-only actions eligible as a step in a saved Lookup chain; playbook entries describe
-// the checks and actions a Playbook can run against one device (see PlaybookContract).
+// the checks and actions a Playbook can run against one device (see PlaybookContract); diagnose
+// entries embed it with their own fields (see DiagnoseEntry).
 type ContractEntry struct {
 	ActionKey   string `json:"action_key"`
 	DisplayName string `json:"display_name"`
 	Description string `json:"description"`
 
 	// InputSchema declares the parameters this action accepts (populated in
-	// ResolverContract, LookupContract and PlaybookContract.Actions entries — triage entries
-	// and playbook checks take no operator-supplied params; a playbook action declares only
-	// params beyond the device). The control plane renders these as inputs on a call_worker
+	// ResolverContract, LookupContract and PlaybookContract.Actions entries — triage entries,
+	// playbook checks and diagnose entries take no operator-supplied params (a diagnose entry
+	// reached through DiagnosisResult.Next gets the earlier result's Detail instead); a playbook
+	// action declares only params beyond the device). The control plane renders these as inputs on a call_worker
 	// resolution step, the first step of a Lookup chain, or a playbook action, and forwards
 	// operator-provided values via HxCommand.Params. Params are always optional at
 	// the protocol level — the worker owns defaulting and validation of anything it
@@ -284,6 +394,9 @@ type Manifest struct {
 	// once every check passed. nil (omitted) for a worker with nothing to offer playbooks. See
 	// PlaybookContract.
 	PlaybookContract *PlaybookContract `json:"playbook_contract,omitempty"`
+	// DiagnoseContract declares the diagnoses this worker runs when an operator asks why a
+	// ticket is waiting for a person. Empty for a worker with none. See DiagnoseEntry.
+	DiagnoseContract []DiagnoseEntry `json:"diagnose_contract,omitempty"`
 	// AlertContract declares this worker's default recheck policy for the alert->incident
 	// pipeline — nil (and omitted from JSON) for workers that don't publish alerts at all.
 	// The control plane does NOT override RecheckIntervalSeconds/MaxRetries — they are the
