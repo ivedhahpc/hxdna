@@ -399,13 +399,13 @@ type Manifest struct {
 	DiagnoseContract []DiagnoseEntry `json:"diagnose_contract,omitempty"`
 	// AlertContract declares this worker's default recheck policy for the alert->incident
 	// pipeline — nil (and omitted from JSON) for workers that don't publish alerts at all.
-	// The control plane does NOT override RecheckIntervalSeconds/MaxRetries — they are the
-	// sole terms of the control plane<->worker relationship, declared solely by the worker;
-	// an incident cannot be raised without a valid contract. One value for the whole worker,
-	// not per alert/check type — matches today's reality (e.g. a monitoring source polling
-	// everything on one cadence). A pointer, not a value, specifically so omitempty works:
-	// encoding/json never treats a struct value as "empty", so a value field would always
-	// serialize as zeros even when a worker never set it.
+	// RecheckIntervalSeconds/MaxRetries are the default and the floor: the control plane may
+	// wait longer or retry more for some alerts (HelixOps alert rules, e.g. for alerts known
+	// to flap), never less — the worker knows how often its source updates and what keeps it
+	// under its rate limits. An incident cannot be raised without a valid contract. One value
+	// for the whole worker, not per alert/check type. A pointer, not a value, specifically so
+	// omitempty works: encoding/json never treats a struct value as "empty", so a value field
+	// would always serialize as zeros even when a worker never set it.
 	AlertContract *AlertPolicy `json:"alert_contract,omitempty"`
 
 	// EnrichCommandKey names the one Command (must exist in Commands, and should be
