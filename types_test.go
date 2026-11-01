@@ -93,6 +93,127 @@ func TestDiagnoseWireNames(t *testing.T) {
 	}
 }
 
+// The control plane reads alert types and each alert's type by JSON name. Pin them.
+func TestAlertTypeWireNames(t *testing.T) {
+	m := Manifest{AlertContract: &AlertPolicy{
+		RecheckIntervalSeconds: 600, MaxRetries: 2,
+		Types: []AlertTypeEntry{{Type: "unlisted_node", Name: "Unlisted node", Description: "d", ResourceType: "machine", MaxRetries: 3}},
+	}}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `"alert_contract":{"recheck_interval_seconds":600,"max_retries":2,"types":[{"type":"unlisted_node","name":"Unlisted node","description":"d","resource_type":"machine","max_retries":3}]}`
+	if !strings.Contains(string(raw), want) {
+		t.Errorf("manifest JSON missing %s: %s", want, raw)
+	}
+
+	card, err := json.Marshal(AlertCard{Type: "unlisted_node", ResourceID: "n1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(card), `{"type":"unlisted_node","resource_id":"n1"`) {
+		t.Errorf("alert card JSON = %s", card)
+	}
+}
+
+// Existing workers send neither types nor a card type: both stay absent on the wire, and an
+// older manifest still decodes.
+func TestAlertTypesOmittedWhenEmpty(t *testing.T) {
+	raw, err := json.Marshal(Manifest{AlertContract: &AlertPolicy{RecheckIntervalSeconds: 600, MaxRetries: 2}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "types") {
+		t.Errorf("empty Types serialized: %s", raw)
+	}
+	card, err := json.Marshal(AlertCard{ResourceID: "n1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(card), `"type"`) {
+		t.Errorf("empty Type serialized: %s", card)
+	}
+
+	var m Manifest
+	if err := json.Unmarshal([]byte(`{"alert_contract":{"recheck_interval_seconds":600,"max_retries":2}}`), &m); err != nil {
+		t.Fatal(err)
+	}
+	if m.AlertContract.Types != nil || m.AlertContract.Validate() != nil {
+		t.Errorf("older alert contract decoded as %+v", m.AlertContract)
+	}
+}
+
+func TestAlertPolicyValidate(t *testing.T) {
+	typ := func(key string, interval, retries int) AlertTypeEntry {
+		return AlertTypeEntry{Type: key, Name: "n", Description: "d", RecheckIntervalSeconds: interval, MaxRetries: retries}
+	}
+	withSeverity := func(sev string) AlertTypeEntry {
+		t := typ("port_down", 0, 0)
+		t.Severity = sev
+		return t
+	}
+	cases := []struct {
+		name string
+		p    AlertPolicy
+		ok   bool
+	}{
+		{"default only", AlertPolicy{RecheckIntervalSeconds: 600, MaxRetries: 2}, true},
+		{"types on the default", AlertPolicy{RecheckIntervalSeconds: 600, MaxRetries: 2, Types: []AlertTypeEntry{typ("port_down", 0, 0)}}, true},
+		{"types longer than the default", AlertPolicy{RecheckIntervalSeconds: 600, MaxRetries: 2, Types: []AlertTypeEntry{typ("port_down", 900, 3)}}, true},
+		{"no default interval", AlertPolicy{MaxRetries: 2}, false},
+		{"no default retries", AlertPolicy{RecheckIntervalSeconds: 600}, false},
+		{"types without a default", AlertPolicy{Types: []AlertTypeEntry{typ("port_down", 600, 2)}}, false},
+		{"shorter interval", AlertPolicy{RecheckIntervalSeconds: 600, MaxRetries: 2, Types: []AlertTypeEntry{typ("port_down", 300, 0)}}, false},
+		{"fewer retries", AlertPolicy{RecheckIntervalSeconds: 600, MaxRetries: 2, Types: []AlertTypeEntry{typ("port_down", 0, 1)}}, false},
+		{"negative timing", AlertPolicy{RecheckIntervalSeconds: 600, MaxRetries: 2, Types: []AlertTypeEntry{typ("port_down", -1, 0)}}, false},
+		{"duplicate key", AlertPolicy{RecheckIntervalSeconds: 600, MaxRetries: 2, Types: []AlertTypeEntry{typ("port_down", 0, 0), typ("port_down", 0, 0)}}, false},
+		{"empty key", AlertPolicy{RecheckIntervalSeconds: 600, MaxRetries: 2, Types: []AlertTypeEntry{typ("", 0, 0)}}, false},
+		{"upper case key", AlertPolicy{RecheckIntervalSeconds: 600, MaxRetries: 2, Types: []AlertTypeEntry{typ("Port_Down", 0, 0)}}, false},
+		{"key starts with a digit", AlertPolicy{RecheckIntervalSeconds: 600, MaxRetries: 2, Types: []AlertTypeEntry{typ("1port", 0, 0)}}, false},
+		{"no name", AlertPolicy{RecheckIntervalSeconds: 600, MaxRetries: 2, Types: []AlertTypeEntry{{Type: "port_down", Description: "d"}}}, false},
+		{"no description", AlertPolicy{RecheckIntervalSeconds: 600, MaxRetries: 2, Types: []AlertTypeEntry{{Type: "port_down", Name: "n"}}}, false},
+		{"known severity", AlertPolicy{RecheckIntervalSeconds: 600, MaxRetries: 2, Types: []AlertTypeEntry{withSeverity("critical")}}, true},
+		{"unknown severity", AlertPolicy{RecheckIntervalSeconds: 600, MaxRetries: 2, Types: []AlertTypeEntry{withSeverity("High")}}, false},
+		{"default interval over cap", AlertPolicy{RecheckIntervalSeconds: MaxAlertRecheckIntervalSeconds + 1, MaxRetries: 2}, false},
+		{"default retries over cap", AlertPolicy{RecheckIntervalSeconds: 600, MaxRetries: MaxAlertRetries + 1}, false},
+		{"type interval at cap", AlertPolicy{RecheckIntervalSeconds: 600, MaxRetries: 2, Types: []AlertTypeEntry{typ("port_down", MaxAlertRecheckIntervalSeconds, MaxAlertRetries)}}, true},
+		{"type interval over cap", AlertPolicy{RecheckIntervalSeconds: 600, MaxRetries: 2, Types: []AlertTypeEntry{typ("port_down", MaxAlertRecheckIntervalSeconds+1, 0)}}, false},
+		{"type retries over cap", AlertPolicy{RecheckIntervalSeconds: 600, MaxRetries: 2, Types: []AlertTypeEntry{typ("port_down", 0, MaxAlertRetries+1)}}, false},
+	}
+	for _, c := range cases {
+		if err := c.p.Validate(); (err == nil) != c.ok {
+			t.Errorf("%s: Validate() = %v, want ok=%v", c.name, err, c.ok)
+		}
+	}
+}
+
+func TestAlertPolicyTimingFor(t *testing.T) {
+	p := AlertPolicy{RecheckIntervalSeconds: 600, MaxRetries: 2, Types: []AlertTypeEntry{
+		{Type: "port_down", Name: "Port down", RecheckIntervalSeconds: 900},
+		{Type: "device_down", Name: "Device down", MaxRetries: 4},
+		// Shorter than the default — Validate would reject it, but TimingFor still floors it.
+		{Type: "flappy", Name: "Flappy", RecheckIntervalSeconds: 60, MaxRetries: 1},
+	}}
+	cases := []struct {
+		alertType         string
+		interval, retries int
+		declared          bool
+	}{
+		{"port_down", 900, 2, true},
+		{"device_down", 600, 4, true},
+		{"flappy", 600, 2, true},
+		{"sensor", 600, 2, false},
+		{"", 600, 2, false},
+	}
+	for _, c := range cases {
+		interval, retries, declared := p.TimingFor(c.alertType)
+		if interval != c.interval || retries != c.retries || declared != c.declared {
+			t.Errorf("TimingFor(%q) = %d, %d, %v; want %d, %d, %v", c.alertType, interval, retries, declared, c.interval, c.retries, c.declared)
+		}
+	}
+}
+
 // A worker with no diagnoses sends no diagnose_contract, and its contracts carry no triggers.
 func TestDiagnoseContractOmittedWhenEmpty(t *testing.T) {
 	raw, err := json.Marshal(Manifest{WorkerType: "w", TriageContract: []ContractEntry{{

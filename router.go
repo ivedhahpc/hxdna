@@ -98,10 +98,18 @@ type capabilityCard struct {
 	Manifest    Manifest  `json:"manifest"`
 }
 
-// Serve checks enrollment status, connects to NATS, announces the capability card,
-// and begins processing HxCommands. Blocks until SIGINT or SIGTERM.
+// Serve checks the manifest's alert contract and enrollment status, connects to NATS,
+// announces the capability card, and begins processing HxCommands. Blocks until SIGINT
+// or SIGTERM.
 func (r *Router) Serve(cfg ServeConfig) error {
 	s := cfg.State
+
+	// A bad alert contract is the worker's own bug: refuse to start rather than announce it.
+	if c := r.manifest.AlertContract; c != nil {
+		if err := c.Validate(); err != nil {
+			return fmt.Errorf("invalid manifest: %w", err)
+		}
+	}
 
 	serviceName := cfg.ServiceName
 	if serviceName == "" {

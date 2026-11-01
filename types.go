@@ -2,6 +2,9 @@ package hxdna
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"regexp"
 	"time"
 )
 
@@ -397,15 +400,16 @@ type Manifest struct {
 	// DiagnoseContract declares the diagnoses this worker runs when an operator asks why a
 	// ticket is waiting for a person. Empty for a worker with none. See DiagnoseEntry.
 	DiagnoseContract []DiagnoseEntry `json:"diagnose_contract,omitempty"`
-	// AlertContract declares this worker's default recheck policy for the alert->incident
-	// pipeline — nil (and omitted from JSON) for workers that don't publish alerts at all.
+	// AlertContract declares this worker's recheck policy for the alert->incident pipeline —
+	// nil (and omitted from JSON) for workers that don't publish alerts at all.
 	// RecheckIntervalSeconds/MaxRetries are the default and the floor: the control plane may
 	// wait longer or retry more for some alerts (HelixOps alert rules, e.g. for alerts known
 	// to flap), never less — the worker knows how often its source updates and what keeps it
-	// under its rate limits. An incident cannot be raised without a valid contract. One value
-	// for the whole worker, not per alert/check type. A pointer, not a value, specifically so
-	// omitempty works: encoding/json never treats a struct value as "empty", so a value field
-	// would always serialize as zeros even when a worker never set it.
+	// under its rate limits. An incident cannot be raised without a valid contract. Types
+	// optionally lists the kinds of alert the worker raises, each with its own timing (see
+	// AlertTypeEntry); without them, the one default covers every alert. A pointer, not a
+	// value, specifically so omitempty works: encoding/json never treats a struct value as
+	// "empty", so a value field would always serialize as zeros even when a worker never set it.
 	AlertContract *AlertPolicy `json:"alert_contract,omitempty"`
 
 	// EnrichCommandKey names the one Command (must exist in Commands, and should be
@@ -437,6 +441,12 @@ type Manifest struct {
 // field here — the control plane takes it from the NATS subject instead, so a worker
 // can't spoof another org/worker by what it puts in the JSON body.
 type AlertCard struct {
+	// Type names the kind of alert, one of the worker's AlertContract.Types (e.g.
+	// "unlisted_node"), so the control plane matches it exactly instead of reading Message.
+	// Omitted by a worker that declares no types; the control plane then uses the worker's
+	// default timing. A type the manifest doesn't (yet) declare is still raised, on the default.
+	Type string `json:"type,omitempty"`
+
 	ResourceID string `json:"resource_id"`
 	Source     string `json:"source"`   // e.g. "monitoring-system"
 	Severity   string `json:"severity"` // low | medium | high | critical
@@ -509,9 +519,113 @@ type ResourceProperties struct {
 // TriageOutcomeDescriptor, so the control plane never has to invent its own text for
 // this contract the way it does for every other one.
 type AlertPolicy struct {
+	// RecheckIntervalSeconds/MaxRetries are the worker-wide default, always required (both
+	// above zero), even when every alert has a declared type: they cover untyped alerts and
+	// types the manifest doesn't declare yet, and floor every type's own timing.
 	RecheckIntervalSeconds int    `json:"recheck_interval_seconds"`
 	MaxRetries             int    `json:"max_retries"`
 	Description            string `json:"description,omitempty"`
+
+	// Types lists the kinds of alert this worker raises. Omitted for a worker that doesn't
+	// distinguish them. A worker whose source defines its own alert kinds (e.g. a monitoring
+	// system's configured alert checkers) builds this list when it builds its manifest.
+	Types []AlertTypeEntry `json:"types,omitempty"`
+}
+
+// AlertTypeEntry is one kind of alert a worker raises — what AlertCard.Type names. The
+// control plane lists these so a person switches each one on or off and sees what it
+// means; anything more for a type (longer timing than declared here, a playbook) is the
+// control plane's setting, never the worker's.
+type AlertTypeEntry struct {
+	Type         string `json:"type"`                    // key, lower snake case: "unlisted_node"
+	Name         string `json:"name"`                    // shown to people: "Unlisted node"
+	Description  string `json:"description"`             // what it means and what clears it — required
+	ResourceType string `json:"resource_type,omitempty"` // same vocabulary as AlertCard.ResourceType
+	Severity     string `json:"severity,omitempty"`      // default when a card leaves Severity empty: low | medium | high | critical
+
+	// This type's own timing. Zero means the worker default. Never less than the default
+	// (Validate rejects a shorter one, and TimingFor never returns one) and never more than
+	// MaxAlertRecheckIntervalSeconds / MaxAlertRetries.
+	RecheckIntervalSeconds int `json:"recheck_interval_seconds,omitempty"`
+	MaxRetries             int `json:"max_retries,omitempty"`
+}
+
+// The longest recheck timing an alert contract may declare — the same caps HelixOps puts on
+// its own alert rules. A rule can only lengthen a worker's timing, never shorten it, so
+// anything past these could never be brought back down.
+const (
+	MaxAlertRecheckIntervalSeconds = 7 * 24 * 60 * 60
+	MaxAlertRetries                = 100
+)
+
+var alertTypeKey = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+
+var alertSeverities = map[string]bool{"low": true, "medium": true, "high": true, "critical": true}
+
+// Validate checks the policy as a worker declares it: the default timing is set and within
+// the caps, and every type has a well-formed, unique key, a name, a description, a known
+// severity (if any) and timing between the default and the caps. Router.Serve runs it on
+// the worker's own manifest before connecting; the control plane should run it on what it
+// receives.
+func (p AlertPolicy) Validate() error {
+	if p.RecheckIntervalSeconds <= 0 || p.MaxRetries <= 0 {
+		return errors.New("alert contract: recheck_interval_seconds and max_retries must both be above zero")
+	}
+	if p.RecheckIntervalSeconds > MaxAlertRecheckIntervalSeconds || p.MaxRetries > MaxAlertRetries {
+		return fmt.Errorf("alert contract: recheck_interval_seconds is capped at %d and max_retries at %d", MaxAlertRecheckIntervalSeconds, MaxAlertRetries)
+	}
+	seen := make(map[string]bool, len(p.Types))
+	for _, t := range p.Types {
+		if !alertTypeKey.MatchString(t.Type) {
+			return fmt.Errorf("alert type %q: key must be lower snake case, starting with a letter", t.Type)
+		}
+		if seen[t.Type] {
+			return fmt.Errorf("alert type %q: declared twice", t.Type)
+		}
+		seen[t.Type] = true
+		if t.Name == "" {
+			return fmt.Errorf("alert type %q: name is required", t.Type)
+		}
+		if t.Description == "" {
+			return fmt.Errorf("alert type %q: description is required", t.Type)
+		}
+		if t.Severity != "" && !alertSeverities[t.Severity] {
+			return fmt.Errorf("alert type %q: severity %q must be low, medium, high or critical", t.Type, t.Severity)
+		}
+		if t.RecheckIntervalSeconds < 0 || t.MaxRetries < 0 {
+			return fmt.Errorf("alert type %q: timing can't be negative", t.Type)
+		}
+		if t.RecheckIntervalSeconds != 0 && t.RecheckIntervalSeconds < p.RecheckIntervalSeconds {
+			return fmt.Errorf("alert type %q: recheck_interval_seconds %d is shorter than the worker default %d", t.Type, t.RecheckIntervalSeconds, p.RecheckIntervalSeconds)
+		}
+		if t.MaxRetries != 0 && t.MaxRetries < p.MaxRetries {
+			return fmt.Errorf("alert type %q: max_retries %d is fewer than the worker default %d", t.Type, t.MaxRetries, p.MaxRetries)
+		}
+		if t.RecheckIntervalSeconds > MaxAlertRecheckIntervalSeconds || t.MaxRetries > MaxAlertRetries {
+			return fmt.Errorf("alert type %q: recheck_interval_seconds is capped at %d and max_retries at %d", t.Type, MaxAlertRecheckIntervalSeconds, MaxAlertRetries)
+		}
+	}
+	return nil
+}
+
+// TimingFor returns the recheck timing for an alert of the given type: the type's own where
+// it sets a longer one, the worker default otherwise — the default is a floor even for a
+// policy nobody validated. declared is false for an empty or undeclared type, which still
+// gets the default — an alert is never dropped for its type.
+func (p AlertPolicy) TimingFor(alertType string) (intervalSeconds, maxRetries int, declared bool) {
+	intervalSeconds, maxRetries = p.RecheckIntervalSeconds, p.MaxRetries
+	if alertType == "" {
+		return intervalSeconds, maxRetries, false
+	}
+	for _, t := range p.Types {
+		if t.Type != alertType {
+			continue
+		}
+		intervalSeconds = max(intervalSeconds, t.RecheckIntervalSeconds)
+		maxRetries = max(maxRetries, t.MaxRetries)
+		return intervalSeconds, maxRetries, true
+	}
+	return intervalSeconds, maxRetries, false
 }
 
 // AlertRecheckResult is the Data payload returned by an "alert_recheck" command — the
