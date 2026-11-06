@@ -31,6 +31,11 @@ type State struct {
 	// before that, or with a control plane that doesn't issue one — it then connects without
 	// credentials, which only works while that NATS server is still open.
 	NatsKey string
+	// CA is the control plane's private CA (PEM), from the bootstrap — see BootstrapPayload.CA.
+	// Saved as ca.pem beside the state's .env (CA_FILE); an operator can also point CA_FILE at
+	// one by hand, for a worker enrolled before its control plane had one. Empty = the
+	// system's authorities only.
+	CA string
 }
 
 // NewState builds the State to save after a successful Enroll, so a worker repo doesn't copy
@@ -49,18 +54,30 @@ func NewState(bp *BootstrapPayload, res *EnrollResult) *State {
 		Environment:   env,
 		SubjectPrefix: res.SubjectPrefix,
 		NatsKey:       res.NatsKey,
+		CA:            bp.CA,
 	}
 }
 
 // NATSOptions returns the options every NATS connection this worker opens must carry — the
 // Router's own, and any a worker repo opens itself (e.g. an alert poller). With a NatsKey the
 // worker connects as its worker ID; the control plane's NATS then allows it only its own
-// subjects.
+// subjects. On a tls:// NatsURL with a CA, the broker's certificate is checked against it too;
+// a nats:// URL stays plain, so a worker isn't cut off before its broker has TLS.
 func (s *State) NATSOptions() []nats.Option {
-	if s.NatsKey == "" {
-		return nil
+	var opts []nats.Option
+	if s.NatsKey != "" {
+		opts = append(opts, nats.UserInfo(s.WorkerID, s.NatsKey))
 	}
-	return []nats.Option{nats.UserInfo(s.WorkerID, s.NatsKey)}
+	if s.CA != "" && strings.HasPrefix(s.NatsURL, "tls://") {
+		opts = append(opts, func(o *nats.Options) error {
+			cfg, err := tlsConfig(s.CA)
+			if err != nil {
+				return err
+			}
+			return nats.Secure(cfg)(o)
+		})
+	}
+	return opts
 }
 
 // LoadState reads state from ~/.{dirName}/.env.
@@ -94,6 +111,16 @@ func LoadState(dirName string) (*State, error) {
 	if !validSubjectPrefix(s.SubjectPrefix) {
 		return nil, fmt.Errorf("state has an invalid subject_prefix %q — re-enroll with: worker enroll <bootstrap>", s.SubjectPrefix)
 	}
+	if caFile := env["CA_FILE"]; caFile != "" {
+		ca, err := os.ReadFile(caFile)
+		if err != nil {
+			return nil, fmt.Errorf("reading CA_FILE: %w", err)
+		}
+		if _, err := tlsConfig(string(ca)); err != nil {
+			return nil, fmt.Errorf("CA_FILE %s: %w", caFile, err)
+		}
+		s.CA = string(ca)
+	}
 	return s, nil
 }
 
@@ -117,6 +144,21 @@ func SaveState(dirName string, s *State) error {
 	}
 	if s.NatsKey != "" {
 		env["NATS_KEY"] = s.NatsKey
+	}
+	caPath := filepath.Join(dir, "ca.pem")
+	if s.CA != "" {
+		if err := os.WriteFile(caPath, []byte(s.CA), 0o600); err != nil {
+			return fmt.Errorf("writing CA: %w", err)
+		}
+		// WriteFile sets the mode only on a new file; a re-enrollment overwrites an old one.
+		if err := os.Chmod(caPath, 0o600); err != nil {
+			return fmt.Errorf("setting CA file permissions: %w", err)
+		}
+		env["CA_FILE"] = caPath
+	} else if err := os.Remove(caPath); err != nil && !os.IsNotExist(err) {
+		// Re-enrolled with a control plane that has no CA: don't leave the old one lying
+		// beside a state that no longer points at it.
+		return fmt.Errorf("removing old CA: %w", err)
 	}
 	path := filepath.Join(dir, ".env")
 	if err := godotenv.Write(env, path); err != nil {

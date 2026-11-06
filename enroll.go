@@ -17,6 +17,10 @@ type BootstrapPayload struct {
 	InstanceID  string `json:"instance_id"`
 	OrgID       string `json:"org_id"`
 	Environment string `json:"environment"`
+	// CA is the private CA (PEM) the control plane's HTTPS and NATS certificates are signed
+	// with, when it has no public certificate. Trusted beside the system's authorities, for
+	// enrollment and, saved with the State, for every connection after it. Empty = system only.
+	CA string `json:"ca"`
 }
 
 // EnrollRequest holds the information the worker provides at enrollment time.
@@ -88,7 +92,10 @@ func Enroll(bp *BootstrapPayload, req EnrollRequest) (*EnrollResult, error) {
 		Version:     req.Version,
 	}
 
-	client := resty.New().SetTimeout(30 * time.Second)
+	client, err := controlClient(bp.CA, 30*time.Second)
+	if err != nil {
+		return nil, err
+	}
 	var resp responseBody
 	r, err := client.R().
 		SetBody(body).
@@ -120,10 +127,26 @@ func Enroll(bp *BootstrapPayload, req EnrollRequest) (*EnrollResult, error) {
 	}, nil
 }
 
+// controlClient is an HTTP client for the control plane that also trusts its private CA.
+func controlClient(caPEM string, timeout time.Duration) (*resty.Client, error) {
+	cfg, err := tlsConfig(caPEM)
+	if err != nil {
+		return nil, err
+	}
+	client := resty.New().SetTimeout(timeout)
+	if cfg != nil {
+		client.SetTLSClientConfig(cfg)
+	}
+	return client, nil
+}
+
 // CheckApproval checks the worker's enrollment status with the control plane.
 // Returns "pending", "active", or "revoked".
 func CheckApproval(s *State) (string, error) {
-	client := resty.New().SetTimeout(10 * time.Second)
+	client, err := controlClient(s.CA, 10*time.Second)
+	if err != nil {
+		return "", err
+	}
 	var result struct {
 		Data struct {
 			Status string `json:"status"`
