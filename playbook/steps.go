@@ -84,7 +84,12 @@ func (checkStep) Exec(ctx context.Context, x *StepContext) (StepResult, error) {
 		return StepResult{Input: in, Data: data, Passed: passed}, nil
 	}
 	in := map[string]any{"worker_id": x.Step.WorkerID, "command_key": deref(x.Step.CommandKey)}
-	data, err := x.Engine.dispatch(ctx, x.Run, x.Step, nil, x.Engine.t.Check)
+	worker, err := x.Engine.workerFor(ctx, x.Run, x.Step)
+	if err != nil {
+		return StepResult{Input: in}, err
+	}
+	in["worker_id"] = worker
+	data, err := x.Engine.dispatch(ctx, x.Run, x.Step, worker, nil, x.Engine.t.Check)
 	if err != nil {
 		return StepResult{Input: in}, err
 	}
@@ -110,7 +115,12 @@ func (actionStep) Exec(ctx context.Context, x *StepContext) (StepResult, error) 
 		return StepResult{}, err
 	}
 	in := map[string]any{"worker_id": x.Step.WorkerID, "command_key": deref(x.Step.CommandKey), "params": params}
-	data, err := x.Engine.dispatch(ctx, x.Run, x.Step, params, x.Engine.t.Action)
+	worker, err := x.Engine.workerFor(ctx, x.Run, x.Step)
+	if err != nil {
+		return StepResult{Input: in}, err
+	}
+	in["worker_id"] = worker
+	data, err := x.Engine.dispatch(ctx, x.Run, x.Step, worker, params, x.Engine.t.Action)
 	return StepResult{Input: in, Data: data}, err
 }
 

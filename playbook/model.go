@@ -54,6 +54,7 @@ type Playbook struct {
 
 // Step is one ordered step of a Playbook. check/action run CommandKey — one of WorkerID's
 // PlaybookContract checks/actions — against the run's device; an action also sends Params.
+// WorkerID may be empty when the Dispatcher is a WorkerResolver: the run then decides the worker.
 type Step struct {
 	ID             uuid.UUID         `json:"id" db:"id"`
 	OrganizationID uuid.UUID         `json:"organization_id" db:"organization_id"`

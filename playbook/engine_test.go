@@ -356,3 +356,40 @@ func TestRunNowRefusesWhatOutlastsStaleAfter(t *testing.T) {
 		t.Fatal("ran anyway")
 	}
 }
+
+func TestStepWithoutWorkerGoesWhereTheResolverSays(t *testing.T) {
+	h := newHarness(t, Hooks{})
+	wyn, atn := uuid.New(), uuid.New()
+	rw := &resolvingWorker{fakeWorker: h.w, bySite: map[string]uuid.UUID{"wynford": wyn, "atnorth": atn}}
+	e := New(h.store, rw, Options{})
+	p := h.store.addPlaybook(h.org, "Power cycle",
+		&Step{StepName: "bmc", StepType: StepCheck, CommandKey: strp("bmc_answering")},
+		&Step{StepName: "reset", StepType: StepAction, CommandKey: strp("power_reset")},
+		&Step{StepName: "pinned", StepType: StepAction, WorkerID: &h.worker, CommandKey: strp("power_reset")})
+
+	run, _, err := e.RunNow(context.Background(), StartRequest{OrgID: h.org, PlaybookID: p.ID, ResourceID: "node1", Ext: "atnorth"})
+	if err != nil {
+		t.Fatalf("RunNow: %v", err)
+	}
+	if got := h.w.sentTo; len(got) != 3 || got[0] != atn || got[1] != atn || got[2] != h.worker {
+		t.Fatalf("sent to %v, want atnorth, atnorth, the pinned worker", got)
+	}
+	steps, _ := h.store.ListRunSteps(context.Background(), run.ID)
+	if steps[0].InputJSON == nil || !strings.Contains(string(*steps[0].InputJSON), atn.String()) {
+		t.Fatalf("recorded input does not name the resolved worker")
+	}
+
+	// A site with no worker fails the first step; nothing acts.
+	h.w.sent, h.w.sentTo = nil, nil
+	if _, _, err = e.RunNow(context.Background(), StartRequest{OrgID: h.org, PlaybookID: p.ID, ResourceID: "node2", Ext: "nowhere"}); err == nil || !strings.Contains(err.Error(), "no Foreman worker") {
+		t.Fatalf("want the resolver's error, got %v", err)
+	}
+	if len(h.w.sent) != 0 {
+		t.Fatalf("sent %v with no worker", h.w.sent)
+	}
+
+	// Without a resolver a step with no worker fails.
+	if _, _, err = h.e.RunNow(context.Background(), StartRequest{OrgID: h.org, PlaybookID: p.ID, ResourceID: "node3"}); err == nil || !strings.Contains(err.Error(), "no worker") {
+		t.Fatalf("want 'no worker', got %v", err)
+	}
+}

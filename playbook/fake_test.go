@@ -225,6 +225,7 @@ type fakeWorker struct {
 	manifest hxdna.Manifest
 	answer   map[string]func(cmd hxdna.HxCommand) (map[string]any, error)
 	sent     []hxdna.HxCommand
+	sentTo   []uuid.UUID
 }
 
 func (w *fakeWorker) Entry(_ context.Context, org, _ uuid.UUID, stepType, key string) (*hxdna.ContractEntry, error) {
@@ -236,9 +237,10 @@ func (w *fakeWorker) Entry(_ context.Context, org, _ uuid.UUID, stepType, key st
 	return FindEntry(w.manifest, "fake", stepType, key)
 }
 
-func (w *fakeWorker) Send(_ context.Context, _ *Run, _ uuid.UUID, cmd hxdna.HxCommand, _ time.Duration) (map[string]any, error) {
+func (w *fakeWorker) Send(_ context.Context, _ *Run, workerID uuid.UUID, cmd hxdna.HxCommand, _ time.Duration) (map[string]any, error) {
 	w.mu.Lock()
 	w.sent = append(w.sent, cmd)
+	w.sentTo = append(w.sentTo, workerID)
 	f := w.answer[cmd.CommandKey]
 	w.mu.Unlock()
 	if f == nil {
@@ -255,4 +257,19 @@ func (w *fakeWorker) sentKeys() []string {
 		keys = append(keys, c.CommandKey)
 	}
 	return keys
+}
+
+// resolvingWorker picks the worker from run.Ext (a site → worker map, as Provision does).
+type resolvingWorker struct {
+	*fakeWorker
+	bySite map[string]uuid.UUID
+}
+
+func (r *resolvingWorker) WorkerFor(_ context.Context, run *Run, _ *Step) (uuid.UUID, error) {
+	site, _ := run.Ext.(string)
+	id, ok := r.bySite[site]
+	if !ok {
+		return uuid.Nil, fmt.Errorf("site %q has no Foreman worker", site)
+	}
+	return id, nil
 }
