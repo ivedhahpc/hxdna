@@ -8,7 +8,9 @@
 // NATS server asks Serve's handler; the handler looks the worker up through the control
 // plane's own Lookup, checks the key and that the worker is active, and answers with a user
 // JWT allowing only that worker's own subjects (WorkerPermissions). Anything else is refused,
-// so a revoked worker is refused on its next connect or reconnect.
+// so a revoked worker is refused on its next connect or reconnect. A connection is only
+// checked when it is made: with Config.SessionTTL set, the server drops it when the TTL runs
+// out and the worker signs in again, so a worker revoked while connected is cut off within it.
 //
 // The control plane's own connections (command publisher, subscribers, this handler) bypass
 // the callout as users listed in the NATS server's auth_callout auth_users. The server's
@@ -25,6 +27,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	mrand "math/rand/v2"
 	"strings"
 	"time"
 
@@ -49,6 +52,19 @@ const ReplyWindow = 10 * time.Minute
 // lookupTimeout keeps a lookup inside the NATS server's own 2s callout timeout, so a slow
 // database becomes a clean refusal rather than the server giving up mid-answer.
 const lookupTimeout = 1500 * time.Millisecond
+
+// MinSessionTTL is the shortest Config.SessionTTL Serve accepts: each expiry is a reconnect and
+// a database lookup per worker, and a shorter one buys little.
+const MinSessionTTL = 5 * time.Minute
+
+// sessionLength is how long one sign-in lasts: somewhere in the last fifth of ttl. Every worker
+// signs in together after a NATS restart; with one fixed length they would all expire — and all
+// reconnect — together again every ttl, a wave the 2s callout timeout can't answer in full, and
+// a worker refused twice in a row stops reconnecting. The spread lets the waves drift apart.
+func sessionLength(ttl time.Duration) time.Duration {
+	spread := ttl / 5
+	return ttl - spread + time.Duration(mrand.Int64N(int64(spread)+1))
+}
 
 // maxInFlight caps requests answered at once. Every worker reconnects together after a NATS
 // restart; answered one at a time, those at the back of the queue would pass the server's 2s
@@ -115,6 +131,17 @@ type Config struct {
 	// SubjectPrefix is the control plane's worker subject prefix (e.g. "hx").
 	SubjectPrefix string
 	Lookup        Lookup
+	// SessionTTL is how long a worker's sign-in lasts before the server drops the connection
+	// and the worker signs in again (re-checked against Lookup) — at most this long, at least
+	// four fifths of it (see sessionLength). 0 = until it disconnects. At least MinSessionTTL.
+	// A command sent in the instant a worker is reconnecting finds no subscriber and fails fast
+	// with no responders, as for an offline worker.
+	//
+	// Set it only once this control plane's commands carry a reply subject under the worker's
+	// own subjects (hxdna.WorkerSubject(…, "result."+requestID)), not a _INBOX one: a worker may
+	// answer an _INBOX reply only on the connection the command arrived on, so a command still
+	// running when its session expires would lose its result.
+	SessionTTL time.Duration
 	// OnResult, if set, is called once per request with the worker ID (as the client claimed
 	// it) and nil or the real reason it was refused — for the control plane's own logging.
 	OnResult func(workerID string, err error)
@@ -144,6 +171,9 @@ func Serve(nc *nats.Conn, cfg Config) (*nats.Subscription, error) {
 	}
 	if !validToken(cfg.SubjectPrefix) {
 		return nil, fmt.Errorf("natsauth: invalid SubjectPrefix %q", cfg.SubjectPrefix)
+	}
+	if cfg.SessionTTL < 0 || (cfg.SessionTTL > 0 && cfg.SessionTTL < MinSessionTTL) {
+		return nil, fmt.Errorf("natsauth: SessionTTL %s must be 0 or at least %s", cfg.SessionTTL, MinSessionTTL)
 	}
 	sem := make(chan struct{}, maxInFlight)
 	return nc.QueueSubscribe(CalloutSubject, "hxdna-natsauth", func(msg *nats.Msg) {
@@ -229,6 +259,9 @@ func authorize(cfg Config, req *jwt.AuthorizationRequestClaims) (string, error) 
 		uc.Audience = GlobalAccount
 	}
 	uc.Permissions = WorkerPermissions(cfg.SubjectPrefix, w.OrgID, workerID)
+	if cfg.SessionTTL > 0 {
+		uc.Expires = time.Now().Add(sessionLength(cfg.SessionTTL)).Unix()
+	}
 	vr := jwt.CreateValidationResults()
 	uc.Validate(vr)
 	if errs := vr.Errors(); len(errs) > 0 {

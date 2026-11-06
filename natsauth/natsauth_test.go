@@ -3,6 +3,7 @@ package natsauth
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/nats-io/jwt/v2"
 	"github.com/nats-io/nkeys"
@@ -84,6 +85,9 @@ func TestRespond(t *testing.T) {
 	if uc.Resp == nil || uc.Resp.MaxMsgs != 1 || uc.Resp.Expires != ReplyWindow {
 		t.Errorf("resp = %+v", uc.Resp)
 	}
+	if uc.Expires != 0 {
+		t.Errorf("no SessionTTL: want a sign-in that never expires, got expires %d", uc.Expires)
+	}
 
 	// Every refusal gives the client the same reason and no JWT.
 	for name, req := range map[string][]byte{
@@ -118,6 +122,60 @@ func TestRespond(t *testing.T) {
 	token, _ := forged.Encode(other)
 	if _, err := respond(cfg, []byte(token)); err == nil {
 		t.Error("forged request: expected no answer")
+	}
+}
+
+// With SessionTTL the sign-in expires, so the server drops the connection and the worker is
+// checked again — a worker revoked while connected is cut off within the TTL.
+func TestSessionTTL(t *testing.T) {
+	issuer, _ := nkeys.CreateAccount()
+	server, _ := nkeys.CreateServer()
+	key, _ := NewKey()
+	cfg := Config{
+		Issuer:        issuer,
+		SubjectPrefix: "hx",
+		SessionTTL:    time.Hour,
+		Lookup: func(_ context.Context, _ string) (*Worker, error) {
+			return &Worker{OrgID: orgA, KeyHash: HashKey(key), Active: true}, nil
+		},
+	}
+	before := time.Now()
+	resp, err := respond(cfg, request(t, server, workerA, key))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc, err := jwt.DecodeAuthorizationResponseClaims(string(resp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	uc, err := jwt.DecodeUserClaims(rc.Jwt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lo, hi := before.Add(48*time.Minute).Unix(), time.Now().Add(time.Hour).Unix(); uc.Expires < lo || uc.Expires > hi {
+		t.Errorf("expires %d, want between %d and %d (last fifth of the TTL)", uc.Expires, lo, hi)
+	}
+
+	// Lengths stay inside the last fifth of the TTL, and spread out rather than all landing on one.
+	seen := map[time.Duration]bool{}
+	for range 200 {
+		d := sessionLength(time.Hour)
+		if d < 48*time.Minute || d > time.Hour {
+			t.Fatalf("session length %s outside [48m, 1h]", d)
+		}
+		seen[d.Truncate(time.Minute)] = true
+	}
+	if len(seen) < 5 {
+		t.Errorf("session lengths barely spread: %d distinct minutes in 200", len(seen))
+	}
+
+	// Serve refuses a TTL that would churn every worker, or a negative one, before touching nc.
+	for _, ttl := range []time.Duration{-time.Minute, time.Second, MinSessionTTL - time.Second} {
+		bad := cfg
+		bad.SessionTTL = ttl
+		if _, err := Serve(nil, bad); err == nil {
+			t.Errorf("SessionTTL %s: want an error", ttl)
+		}
 	}
 }
 
