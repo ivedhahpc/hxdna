@@ -16,8 +16,9 @@ import (
 // App Requests — the contract between the console (HelixOps) and an app (Provision, Network) for work
 // the console hands over. Design: docs/architecture/app-handoff.md in the docs repo.
 //
-// The console owns tickets; an app never sees one. A request carries a request ID, a capability, its
-// inputs and plain facts. The app answers at once (accepted or rejected), may send updates, and ends
+// The console owns tickets: an app may see the ticket a request is about (Context.Ticket), but never
+// writes to the ticketing system — what it reports goes back through the console. A request carries
+// a request ID, a capability, its inputs and plain facts. The app answers at once (accepted or rejected), may send updates, and ends
 // with exactly one result of four fixed kinds. The four kinds never grow: a new situation is a new
 // capability (app side) or a new outcome → playbook mapping (console side).
 
@@ -123,8 +124,8 @@ func (c AppCapability) Validate() error {
 	return nil
 }
 
-// AppRequestContext is plain facts the app may show or use — what was seen, and since when. It
-// never names a ticket.
+// AppRequestContext is plain facts the app may show or use — what was seen, since when, and the
+// ticket it's about.
 type AppRequestContext struct {
 	// Symptom is the console's word for what's wrong (its triage outcome), e.g. needs_rebuild.
 	Symptom string `json:"symptom,omitempty"`
@@ -132,6 +133,18 @@ type AppRequestContext struct {
 	Detail string `json:"detail,omitempty"`
 	// Since is when the problem was first seen ("how long has this node been out").
 	Since *time.Time `json:"since,omitempty"`
+	// Ticket is the ticket the request is about, to show and link to. The app only reads it: it
+	// never writes to the ticketing system — what it reports goes back through the console, which
+	// posts it on the ticket. Nil for a request with no ticket.
+	Ticket *AppRequestTicket `json:"ticket,omitempty"`
+}
+
+// AppRequestTicket is the ticket an app request is about, as people know it.
+type AppRequestTicket struct {
+	// Number is the ticket's number in the ticketing system, e.g. "48213".
+	Number string `json:"number"`
+	// URL opens the ticket in the ticketing system; empty when the console has no link for it.
+	URL string `json:"url,omitempty"`
 }
 
 // AppRequest is one piece of work the console sends an app (POST {app}/requests).

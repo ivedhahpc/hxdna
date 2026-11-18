@@ -142,3 +142,21 @@ func TestConsoleSignature(t *testing.T) {
 		}
 	}
 }
+
+func TestAppRequestTicketJSON(t *testing.T) {
+	r := AppRequest{RequestID: "r1", OrganizationID: "o1", Capability: "diagnose_node", ReplyBy: time.Now(),
+		Context: AppRequestContext{Ticket: &AppRequestTicket{Number: "48213", URL: "https://sor.example/t/48213"}}}
+	b, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back AppRequest
+	if err := json.Unmarshal(b, &back); err != nil || back.Context.Ticket == nil || back.Context.Ticket.Number != "48213" {
+		t.Errorf("ticket lost: %s", b)
+	}
+	// No ticket: the field is left out, so apps built on v1.20 read the same request.
+	b, _ = json.Marshal(AppRequest{RequestID: "r1"})
+	if strings.Contains(string(b), "ticket") {
+		t.Errorf("empty ticket sent: %s", b)
+	}
+}
