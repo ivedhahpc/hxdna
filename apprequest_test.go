@@ -27,7 +27,8 @@ func rebuildCap() AppCapability {
 }
 
 func TestAppCapabilityValidate(t *testing.T) {
-	for _, c := range []AppCapability{diagnoseCap(), rebuildCap()} {
+	orderCap := AppCapability{Key: "order", Kind: AppCapabilityTask, ResultKinds: []AppResultKind{AppResultResolved, AppResultNeedsHuman}, MaxHours: 720}
+	for _, c := range []AppCapability{diagnoseCap(), rebuildCap(), orderCap} {
 		if err := c.Validate(); err != nil {
 			t.Errorf("%s refused: %v", c.Key, err)
 		}

@@ -29,6 +29,10 @@ const (
 	AppCapabilityRead = "read"
 	// AppCapabilityWrite changes something; the console gets approval before it sends one.
 	AppCapabilityWrite = "write"
+	// AppCapabilityTask puts work in front of a person in the app (an order to fulfil); the app
+	// itself changes nothing because of it. The person answers — resolved when they've done it —
+	// so the console needs no approval to send one.
+	AppCapabilityTask = "task"
 )
 
 // AppResultKind is how a request ended — one of four, fixed.
@@ -69,7 +73,7 @@ type AppCapability struct {
 	Key         string `json:"key"`
 	DisplayName string `json:"display_name"`
 	Description string `json:"description"`
-	// Kind is AppCapabilityRead or AppCapabilityWrite.
+	// Kind is AppCapabilityRead, AppCapabilityWrite or AppCapabilityTask.
 	Kind string `json:"kind"`
 	// Inputs declares the inputs it takes (same idiom as a worker command's InputSchema).
 	Inputs InputSchema `json:"inputs,omitempty"`
@@ -86,8 +90,8 @@ func (c AppCapability) Validate() error {
 	if !appKeyRe.MatchString(c.Key) {
 		return fmt.Errorf("capability key %q: lowercase letters, digits and _, starting with a letter", c.Key)
 	}
-	if c.Kind != AppCapabilityRead && c.Kind != AppCapabilityWrite {
-		return fmt.Errorf("capability %s: kind must be read or write", c.Key)
+	if c.Kind != AppCapabilityRead && c.Kind != AppCapabilityWrite && c.Kind != AppCapabilityTask {
+		return fmt.Errorf("capability %s: kind must be read, write or task", c.Key)
 	}
 	if len(c.ResultKinds) == 0 {
 		return fmt.Errorf("capability %s: declare at least one result kind", c.Key)
