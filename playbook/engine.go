@@ -163,11 +163,26 @@ func (e *Engine) ValidateOrder(steps []*Step) error {
 // WorstCase is the longest a run of steps can take, each step at its full budget. Call after
 // ValidateOrder (an unknown type counts as nothing).
 func (e *Engine) WorstCase(steps []*Step) time.Duration {
+	return e.WorstCaseContext(context.Background(), steps)
+}
+
+// WorstCaseContext is WorstCase, asking a type that is a StepBudgeter for each of its steps' own
+// budget (ctx is for its lookups); every other type counts at Budget.
+func (e *Engine) WorstCaseContext(ctx context.Context, steps []*Step) time.Duration {
 	var d time.Duration
 	for _, st := range steps {
-		if t, ok := e.types[st.StepType]; ok {
-			d += t.Budget(e.t)
+		t, ok := e.types[st.StepType]
+		if !ok {
+			continue
 		}
+		// A budgeter's zero or negative answer is a bug in it; never let it shrink the total.
+		if b, ok := t.(StepBudgeter); ok {
+			if sb := b.StepBudget(ctx, e.t, st); sb > 0 {
+				d += sb
+				continue
+			}
+		}
+		d += t.Budget(e.t)
 	}
 	return d
 }
@@ -185,8 +200,8 @@ func (e *Engine) phaseSteps(steps []*Step, phase Phase) []*Step {
 
 // fitsPhase refuses a person's run whose phase could take longer than Timeouts.Run — cut off
 // mid-action, the run would stop partway with the device half changed.
-func (e *Engine) fitsPhase(steps []*Step, phase Phase) error {
-	if need := e.WorstCase(e.phaseSteps(steps, phase)); need > e.t.Run {
+func (e *Engine) fitsPhase(ctx context.Context, steps []*Step, phase Phase) error {
+	if need := e.WorstCaseContext(ctx, e.phaseSteps(steps, phase)); need > e.t.Run {
 		what := "actions"
 		if phase == PhaseCheck {
 			what = "checks"
@@ -294,7 +309,7 @@ func (e *Engine) StartChecks(ctx context.Context, req StartRequest) (*Run, error
 	}
 	// Both phases, before any check runs: no point checking a device for actions that can't run.
 	for _, ph := range []Phase{PhaseCheck, PhaseAction} {
-		if err := e.fitsPhase(steps, ph); err != nil {
+		if err := e.fitsPhase(ctx, steps, ph); err != nil {
 			return nil, err
 		}
 	}
@@ -335,7 +350,7 @@ func (e *Engine) Execute(ctx context.Context, orgID, runID, executedBy uuid.UUID
 	if err := e.ValidateOrder(steps); err != nil {
 		return nil, err
 	}
-	if err := e.fitsPhase(steps, PhaseAction); err != nil {
+	if err := e.fitsPhase(ctx, steps, PhaseAction); err != nil {
 		return nil, err
 	}
 	// The checks stand only while recent — a ready run's updated_at is when they finished — and
@@ -371,7 +386,7 @@ func (e *Engine) RunNow(ctx context.Context, req StartRequest) (*Run, map[string
 	if err != nil {
 		return nil, nil, err
 	}
-	need := e.WorstCase(steps)
+	need := e.WorstCaseContext(ctx, steps)
 	if deadline, ok := ctx.Deadline(); ok {
 		if budget := time.Until(deadline); need > budget {
 			return nil, nil, validationErr(fmt.Sprintf("playbook %s can take up to %s, more than the %s this run is allowed — use fewer steps", p.Name, need.Round(time.Second), budget.Round(time.Second)))

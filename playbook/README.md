@@ -81,3 +81,4 @@ could take the device while it is still acting.
 |---|---|
 | v0.1.0 | First: the engine from HelixOps. |
 | v0.2.0 | `WorkerResolver` (optional on the Dispatcher): steps with no worker take the run's. Additive; schema unchanged. |
+| v0.3.0 | `StepBudgeter` (optional on a StepType): the engine asks each of its steps for its own budget instead of the type-wide `Budget` — e.g. a script step at the script's own timeout — and `WorstCaseContext`. Additive; schema unchanged. |

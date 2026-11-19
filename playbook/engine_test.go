@@ -393,3 +393,60 @@ func TestStepWithoutWorkerGoesWhereTheResolverSays(t *testing.T) {
 		t.Fatalf("want 'no worker', got %v", err)
 	}
 }
+
+// quickCheck is an app check whose steps each say how long they take (StepBudgeter): Content holds
+// the seconds. Its type-wide Budget is the slowest any could be.
+type quickCheck struct{}
+
+func (quickCheck) Type() string                  { return "quick_check" }
+func (quickCheck) Phase() Phase                  { return PhaseCheck }
+func (quickCheck) Budget(Timeouts) time.Duration { return 150 * time.Second }
+func (quickCheck) StepBudget(_ context.Context, _ Timeouts, st *Step) time.Duration {
+	d, err := time.ParseDuration(*st.Content + "s")
+	if err != nil {
+		return 150 * time.Second
+	}
+	return d
+}
+func (quickCheck) Exec(context.Context, *StepContext) (StepResult, error) {
+	return StepResult{Passed: true, Data: map[string]any{"reason": "ok"}}, nil
+}
+
+// A StepBudgeter's steps count at their own budget: six 60 s checks fit a 10-minute phase that six
+// at the type-wide 150 s (15 min) wouldn't; a step it can't size counts as the worst case.
+func TestStepBudgeterCountsEachStep(t *testing.T) {
+	h := newHarness(t, Hooks{})
+	if err := h.e.Register(quickCheck{}); err != nil {
+		t.Fatal(err)
+	}
+	var steps []*Step
+	for i := 0; i < 6; i++ {
+		steps = append(steps, &Step{StepName: "q" + string(rune('a'+i)), StepType: "quick_check", Content: strp("60")})
+	}
+	if got := h.e.WorstCase(steps); got != 6*time.Minute {
+		t.Fatalf("worst case %s, want 6m", got)
+	}
+	p := h.store.addPlaybook(h.org, "Six quick checks", steps...)
+	run, err := h.e.StartChecks(context.Background(), StartRequest{OrgID: h.org, PlaybookID: p.ID, ResourceID: "node1"})
+	if err != nil {
+		t.Fatalf("StartChecks refused six 60 s checks: %v", err)
+	}
+	waitStatus(t, h.store, run.ID, RunReady)
+
+	unsized := []*Step{{StepName: "x", StepType: "quick_check", Content: strp("not a number")}}
+	if got := h.e.WorstCase(unsized); got != 150*time.Second {
+		t.Fatalf("unsized step counted %s, want the 150 s worst case", got)
+	}
+	zero := []*Step{{StepName: "z", StepType: "quick_check", Content: strp("0")}}
+	if got := h.e.WorstCase(zero); got != 150*time.Second {
+		t.Fatalf("a zero budget counted %s, want the type's 150 s", got)
+	}
+	var slow []*Step
+	for i := 0; i < 5; i++ {
+		slow = append(slow, &Step{StepName: "s" + string(rune('a'+i)), StepType: "quick_check", Content: strp("150")})
+	}
+	p2 := h.store.addPlaybook(h.org, "Five slow checks", slow...)
+	if _, err := h.e.StartChecks(context.Background(), StartRequest{OrgID: h.org, PlaybookID: p2.ID, ResourceID: "node2"}); !IsValidation(err) {
+		t.Fatalf("five 150 s checks (12m30s) should not fit 10 min, got %v", err)
+	}
+}

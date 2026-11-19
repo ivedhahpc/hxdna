@@ -32,6 +32,16 @@ type StepType interface {
 	Exec(ctx context.Context, x *StepContext) (StepResult, error)
 }
 
+// StepBudgeter is optional on a StepType whose steps don't all take the same time — an app's script
+// step, say, whose longest is the script's own timeout. The engine asks it for each step of the type
+// instead of adding Budget, which stays the type's worst case; a step it can't size, it answers with
+// that worst case itself. A step must never take longer than the budget it reports: the engine
+// counts on these to keep a run inside Timeouts.Run and StaleAfter (past StaleAfter another run may
+// take the device). A budget of zero or less counts as Budget.
+type StepBudgeter interface {
+	StepBudget(ctx context.Context, t Timeouts, step *Step) time.Duration
+}
+
 // StepContext is what a step runs with.
 type StepContext struct {
 	Engine *Engine
