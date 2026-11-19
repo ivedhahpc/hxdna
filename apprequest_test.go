@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func diagnoseCap() AppCapability {
@@ -158,5 +159,36 @@ func TestAppRequestTicketJSON(t *testing.T) {
 	b, _ = json.Marshal(AppRequest{RequestID: "r1"})
 	if strings.Contains(string(b), "ticket") {
 		t.Errorf("empty ticket sent: %s", b)
+	}
+}
+
+// v1.22: a request carries the ticket's title and description; both are left out when empty, so a
+// request from an older console reads as before, and an older app simply ignores them.
+func TestAppRequestTicketTitleDescription(t *testing.T) {
+	desc := "Order: ORD-10421\nCustomer: acme-ai\nItem: gpu-h100-8x x 2"
+	r := AppRequest{RequestID: "r1", Context: AppRequestContext{Ticket: &AppRequestTicket{
+		Number: "48213", Title: "Order ORD-10421 — Acme AI", Description: desc}}}
+	b, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back AppRequest
+	if err := json.Unmarshal(b, &back); err != nil || back.Context.Ticket.Title != "Order ORD-10421 — Acme AI" || back.Context.Ticket.Description != desc {
+		t.Fatalf("title/description lost: %s", b)
+	}
+	b, _ = json.Marshal(AppRequest{Context: AppRequestContext{Ticket: &AppRequestTicket{Number: "1"}}})
+	if strings.Contains(string(b), "title") || strings.Contains(string(b), "description") {
+		t.Errorf("empty title/description sent: %s", b)
+	}
+}
+
+func TestTicketDescription(t *testing.T) {
+	if got := TicketDescription("short"); got != "short" {
+		t.Errorf("short text changed: %q", got)
+	}
+	long := strings.Repeat("é", TicketDescriptionMax) // 2 bytes each — the cut lands mid-character
+	got := TicketDescription(long)
+	if len(got) > TicketDescriptionMax || !strings.HasSuffix(got, "…") || !utf8.ValidString(got) {
+		t.Errorf("cut to %d bytes, valid UTF-8 %v", len(got), utf8.ValidString(got))
 	}
 }

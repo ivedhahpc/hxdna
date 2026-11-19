@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // App Requests — the contract between the console (HelixOps) and an app (Provision, Network) for work
@@ -145,6 +146,29 @@ type AppRequestTicket struct {
 	Number string `json:"number"`
 	// URL opens the ticket in the ticketing system; empty when the console has no link for it.
 	URL string `json:"url,omitempty"`
+	// Title is the ticket's subject, e.g. "Order ORD-10421 — Acme AI". Empty from a console before v1.22.
+	Title string `json:"title,omitempty"`
+	// Description is the ticket's body as the ticketing system holds it — what the person working the
+	// request reads (an order's lines, say). At most TicketDescriptionMax bytes: the console cuts a
+	// longer one (TicketDescription). Empty from a console before v1.22.
+	Description string `json:"description,omitempty"`
+}
+
+// TicketDescriptionMax is the most of a ticket's description a request carries.
+const TicketDescriptionMax = 16 << 10
+
+// TicketDescription is s cut to at most TicketDescriptionMax bytes — on a character boundary, ending
+// "…" when anything was cut — for AppRequestTicket.Description.
+func TicketDescription(s string) string {
+	if len(s) <= TicketDescriptionMax {
+		return s
+	}
+	const more = "…"
+	cut := TicketDescriptionMax - len(more)
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + more
 }
 
 // AppRequest is one piece of work the console sends an app (POST {app}/requests).
