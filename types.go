@@ -434,6 +434,12 @@ type Manifest struct {
 	// in the operator's free-form ask box, neither of which applies here. Omitted (empty
 	// string) for a worker with no metrics-push capability.
 	MetricsCommandKey string `json:"metrics_command_key,omitempty"`
+	// Program is the worker's program name on its host — the binary and, with a worker repo's
+	// `make setup`, its own account (/usr/local/bin/<program>, run as <program>). Not set by the
+	// worker: Router.Serve fills it from ServeConfig.ServiceName when it announces, so a control
+	// plane can show the exact command for this worker (e.g. Re-enroll). Empty from a worker on
+	// an older hxdna, or one that leaves ServiceName unset.
+	Program string `json:"program,omitempty"`
 }
 
 // AlertCard is the payload a worker publishes on hx.agents.{org}.{worker}.alert to

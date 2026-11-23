@@ -148,6 +148,12 @@ func (r *Router) Serve(cfg ServeConfig) error {
 		Version:  cfg.Version,
 		Manifest: r.manifest,
 	}
+	// The program name the worker runs as (its InstanceName, passed as ServiceName) — announced
+	// so the control plane can show exact commands for it. Only a name the worker set, never the
+	// "worker" log default.
+	if card.Manifest.Program == "" && cfg.ServiceName != "" {
+		card.Manifest.Program = cfg.ServiceName
+	}
 	onlineSubject := WorkerSubject(s.SubjectPrefix, s.OrgID, s.WorkerID, "online")
 
 	announce := func(nc *nats.Conn) error {
