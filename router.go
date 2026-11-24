@@ -89,9 +89,12 @@ type ServeConfig struct {
 }
 
 type capabilityCard struct {
-	AgentID     string    `json:"agent_id"`
-	OrgID       string    `json:"org_id"`
-	Hostname    string    `json:"hostname"`
+	AgentID  string `json:"agent_id"`
+	OrgID    string `json:"org_id"`
+	Hostname string `json:"hostname"`
+	// IPAddress is the worker's address towards the broker (OutboundIP), worked out at each
+	// announce so a changed address corrects itself. Empty when it can't tell.
+	IPAddress   string    `json:"ip_address,omitempty"`
 	OS          string    `json:"os"`
 	Version     string    `json:"version"`
 	AnnouncedAt time.Time `json:"announced_at"`
@@ -158,6 +161,7 @@ func (r *Router) Serve(cfg ServeConfig) error {
 
 	announce := func(nc *nats.Conn) error {
 		card.AnnouncedAt = time.Now().UTC()
+		card.IPAddress = OutboundIP(s.NatsURL)
 		b, err := json.Marshal(card)
 		if err != nil {
 			return fmt.Errorf("failed to marshal capability card: %w", err)

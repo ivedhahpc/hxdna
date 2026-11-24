@@ -29,6 +29,8 @@ type EnrollRequest struct {
 	Description string
 	Hostname    string
 	Version     string
+	// IPAddress is the worker's address; empty means OutboundIP towards the control plane.
+	IPAddress string
 }
 
 // EnrollResult holds the data returned by the control plane after a successful enrollment.
@@ -69,6 +71,7 @@ func Enroll(bp *BootstrapPayload, req EnrollRequest) (*EnrollResult, error) {
 		Description string `json:"description,omitempty"`
 		Environment string `json:"environment,omitempty"`
 		Hostname    string `json:"hostname"`
+		IPAddress   string `json:"ip_address,omitempty"`
 		Version     string `json:"version"`
 	}
 	type responseBody struct {
@@ -89,7 +92,11 @@ func Enroll(bp *BootstrapPayload, req EnrollRequest) (*EnrollResult, error) {
 		Description: req.Description,
 		Environment: bp.Environment,
 		Hostname:    req.Hostname,
+		IPAddress:   req.IPAddress,
 		Version:     req.Version,
+	}
+	if body.IPAddress == "" {
+		body.IPAddress = OutboundIP(bp.URL)
 	}
 
 	client, err := controlClient(bp.CA, 30*time.Second)
