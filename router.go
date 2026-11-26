@@ -221,6 +221,7 @@ func (r *Router) Serve(cfg ServeConfig) error {
 				result := HxResult{
 					Success:    false,
 					Error:      "bad payload: " + err.Error(),
+					Failure:    FailureTerminal,
 					ExecutedAt: time.Now().UTC(),
 				}
 				_ = nc.Publish(msg.Reply, result.ToJSON())
@@ -304,6 +305,7 @@ func (r *Router) dispatch(cmd HxCommand) HxResult {
 	if handler == nil {
 		result.Success = false
 		result.Error = fmt.Sprintf("unknown command: %s", cmd.CommandKey)
+		result.Failure = FailureTerminal
 		return result
 	}
 
@@ -311,6 +313,7 @@ func (r *Router) dispatch(cmd HxCommand) HxResult {
 	if err != nil {
 		result.Success = false
 		result.Error = err.Error()
+		result.Failure = FailureKindOf(err)
 	} else {
 		result.Success = true
 		if data != nil {
@@ -318,6 +321,7 @@ func (r *Router) dispatch(cmd HxCommand) HxResult {
 			if marshalErr != nil {
 				result.Success = false
 				result.Error = "marshal result data: " + marshalErr.Error()
+				result.Failure = FailureTerminal
 				return result
 			}
 			result.Data = b

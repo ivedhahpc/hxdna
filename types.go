@@ -31,11 +31,13 @@ type HxCommand struct {
 
 // HxResult is the response a worker publishes back after executing an HxCommand.
 type HxResult struct {
-	RequestID  string          `json:"request_id"`
-	Success    bool            `json:"success"`
-	Data       json.RawMessage `json:"data,omitempty"`
-	Error      string          `json:"error,omitempty"`
-	ExecutedAt time.Time       `json:"executed_at"`
+	RequestID string          `json:"request_id"`
+	Success   bool            `json:"success"`
+	Data      json.RawMessage `json:"data,omitempty"`
+	Error     string          `json:"error,omitempty"`
+	// Failure classifies a failed command (see FailureKind); empty when the handler didn't.
+	Failure    FailureKind `json:"failure,omitempty"`
+	ExecutedAt time.Time   `json:"executed_at"`
 }
 
 // ToJSON serialises the result for NATS publishing.
@@ -48,6 +50,7 @@ func (r HxResult) ToJSON() []byte {
 			RequestID:  r.RequestID,
 			Success:    false,
 			Error:      "result serialisation failed: " + err.Error(),
+			Failure:    FailureTerminal,
 			ExecutedAt: r.ExecutedAt,
 		}
 		b, _ = json.Marshal(fallback)
@@ -440,6 +443,15 @@ type Manifest struct {
 	// plane can show the exact command for this worker (e.g. Re-enroll). Empty from a worker on
 	// an older hxdna, or one that leaves ServiceName unset.
 	Program string `json:"program,omitempty"`
+
+	// InventoryContract declares list_inventory (see inventory.go); nil for a worker that
+	// lists nothing.
+	InventoryContract *InventoryContract `json:"inventory_contract,omitempty"`
+	// Extensions carries contracts that belong to one line of business, keyed by name (e.g.
+	// "provision.build"), each defined and versioned in its own module (hxdna/provision) —
+	// so this core stays free of their words. Read and written only through that module's
+	// helpers.
+	Extensions map[string]json.RawMessage `json:"extensions,omitempty"`
 }
 
 // AlertCard is the payload a worker publishes on hx.agents.{org}.{worker}.alert to
