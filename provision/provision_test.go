@@ -26,17 +26,6 @@ func TestParamsRoundTrip(t *testing.T) {
 	}
 }
 
-func TestLegacyParams(t *testing.T) {
-	r, err := ParseBuildRequest(map[string]string{"template_id": "9000", "cores": "4", "vlan_tag": "201"}, nil)
-	if err != nil || r.ImageRef != "9000" || r.VCPUs != 4 || r.VLAN != 201 {
-		t.Errorf("legacy names: %+v %v", r, err)
-	}
-	r, _ = ParseBuildRequest(map[string]string{"template_id": "1", "image_ref": "9000"}, nil)
-	if r.ImageRef != "9000" {
-		t.Errorf("the current name must win over the legacy one: %q", r.ImageRef)
-	}
-}
-
 func TestParseRefusesBadValuesAsTerminal(t *testing.T) {
 	bad := []map[string]string{
 		{"vlan": "4095"},

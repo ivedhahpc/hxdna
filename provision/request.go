@@ -33,13 +33,6 @@ const (
 	ParamInstanceID      = "instance_id"
 )
 
-// legacyParams are the names v1 workers accept for one release while control planes move over.
-var legacyParams = map[string]string{
-	"template_id": ParamImageRef,
-	"cores":       ParamVCPUs,
-	"vlan_tag":    ParamVLAN,
-}
-
 // BuildRequest is a build's values. Each step sends the ones it needs: clone gets build_id,
 // name, image_ref; configure gets build_id, instance_id and the rest. Zero means "not sent".
 type BuildRequest struct {
@@ -100,11 +93,6 @@ func ParseBuildRequest(params map[string]string, acceptedOptions []string) (Buil
 	p := map[string]string{}
 	for k, v := range params {
 		p[k] = strings.TrimSpace(v)
-	}
-	for old, cur := range legacyParams {
-		if p[cur] == "" && p[old] != "" {
-			p[cur] = p[old]
-		}
 	}
 	r := BuildRequest{
 		BuildID: p[ParamBuildID], InstanceID: p[ParamInstanceID], Name: p[ParamName], ImageRef: p[ParamImageRef],

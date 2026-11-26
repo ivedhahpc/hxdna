@@ -4,7 +4,7 @@ The provisioning line of business's worker contracts. Its own Go module inside t
 (tags `provision/v0.x.y`), so the common hxdna core never learns provisioning words.
 
 ```
-go get github.com/ivedhahpc/hxdna/provision@v0.1.0
+go get github.com/ivedhahpc/hxdna/provision@v0.2.0
 ```
 
 Design: `docs/architecture/provision-contracts.md` in the hive docs repo.
@@ -16,8 +16,7 @@ Design: `docs/architecture/provision-contracts.md` in the hive docs repo.
   `platform_options` keys a worker accepts. Stored in `hxdna.Manifest.Extensions["provision.build"]`
   via `SetBuildContract` / `BuildContractOf`.
 - **BuildRequest**: the build's values as params (`Params`, control-plane side) and parsed and
-  checked (`ParseBuildRequest`, worker side). Bad values come back `hxdna.Terminal`. The v0 names
-  `template_id`, `cores` and `vlan_tag` are still accepted for one release.
+  checked (`ParseBuildRequest`, worker side). Bad values come back `hxdna.Terminal`.
 - **Answers**: `StepResult`, `TaskStatus`, `InstanceStatus`, and `VMDetails` for the common
   Inventory contract (`hxdna.InventoryItem.Details`).
 - **Build label**: `BuildLabel(id)` is written onto every machine a build makes; `BuildIDFrom`
